@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+.env
+*.log
+*.db
+agent_db.json
+mongo-init.js
+.scrap*/

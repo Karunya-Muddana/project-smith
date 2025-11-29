@@ -1,0 +1,22 @@
+services:
+  mongo:
+    image: mongo:6.0
+    container_name: smith_mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: password
+
+      # App user for SMITH — THIS is what your Python connects with
+      MONGO_INITDB_DATABASE: project_smith
+      MONGO_USERNAME: smith_user
+      MONGO_PASSWORD: smith_pass
+    command: ["mongod", "--auth", "--bind_ip_all"]
+    volumes:
+      - projectsmith_mongo_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+
+volumes:
+  projectsmith_mongo_data:
