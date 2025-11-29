@@ -160,7 +160,7 @@ A --> B --> C --> D --> E --> F
 
 ## 5. Pipeline Summary & Core Principles
 
-### 🔁 Smith Pipeline Summary
+###  Smith Pipeline Summary
 
 1. User enters request →
 2. Planner builds DAG →
@@ -182,7 +182,7 @@ G[Human-readable answer returned]
 A --> B --> C --> D --> E --> F --> G
 ```
 
-### 🧠 Core Principles
+###  Core Principles
 
 * **Determinism** — the same DAG always produces the same behavior.
 * **Metadata‑Driven** — the engine does not "know" tools; it only reads their metadata.
