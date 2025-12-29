@@ -16,18 +16,33 @@ WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
 
 # WMO Weather Codes (Interpretation)
 WEATHER_CODES = {
-    0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-    45: "Fog", 48: "Depositing rime fog",
-    51: "Light drizzle", 53: "Moderate drizzle", 55: "Dense drizzle",
-    61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
-    71: "Slight snow", 73: "Moderate snow", 75: "Heavy snow",
-    80: "Rain showers", 81: "Moderate rain showers", 82: "Violent rain showers",
-    95: "Thunderstorm", 96: "Thunderstorm with slight hail", 99: "Thunderstorm with heavy hail"
+    0: "Clear sky",
+    1: "Mainly clear",
+    2: "Partly cloudy",
+    3: "Overcast",
+    45: "Fog",
+    48: "Depositing rime fog",
+    51: "Light drizzle",
+    53: "Moderate drizzle",
+    55: "Dense drizzle",
+    61: "Slight rain",
+    63: "Moderate rain",
+    65: "Heavy rain",
+    71: "Slight snow",
+    73: "Moderate snow",
+    75: "Heavy snow",
+    80: "Rain showers",
+    81: "Moderate rain showers",
+    82: "Violent rain showers",
+    95: "Thunderstorm",
+    96: "Thunderstorm with slight hail",
+    99: "Thunderstorm with heavy hail",
 }
 
 # ------------------------------
 # Core Functions
 # ------------------------------
+
 
 def get_coordinates(city: str):
     """Convert city name to Lat/Lon."""
@@ -35,17 +50,17 @@ def get_coordinates(city: str):
         params = {"name": city, "count": 1, "language": "en", "format": "json"}
         resp = requests.get(GEOCODING_URL, params=params, timeout=10)
         resp.raise_for_status()
-        
+
         data = resp.json()
         if not data.get("results"):
             return None
-            
+
         location = data["results"][0]
         return {
             "name": location["name"],
             "lat": location["latitude"],
             "lon": location["longitude"],
-            "country": location.get("country", "")
+            "country": location.get("country", ""),
         }
     except Exception as e:
         raise RuntimeError(f"Geocoding failed: {e}")
@@ -65,20 +80,25 @@ def get_weather_by_city(city: str):
         params = {
             "latitude": loc["lat"],
             "longitude": loc["lon"],
-            "current": ["temperature_2m", "relative_humidity_2m", "weather_code", "wind_speed_10m"],
-            "timezone": "auto"
+            "current": [
+                "temperature_2m",
+                "relative_humidity_2m",
+                "weather_code",
+                "wind_speed_10m",
+            ],
+            "timezone": "auto",
         }
-        
+
         resp = requests.get(WEATHER_URL, params=params, timeout=10)
         resp.raise_for_status()
-        
+
         data = resp.json()
         current = data.get("current", {})
-        
+
         # 3. Interpret Code
         code = current.get("weather_code", 0)
         condition = WEATHER_CODES.get(code, "Unknown")
-        
+
         return {
             "status": "success",
             "city": loc["name"],
@@ -87,7 +107,7 @@ def get_weather_by_city(city: str):
             "humidity": current.get("relative_humidity_2m"),
             "wind_speed": current.get("wind_speed_10m"),
             "condition": condition,
-            "unit": "Celsius"
+            "unit": "Celsius",
         }
 
     except Exception as e:
@@ -98,11 +118,13 @@ def get_weather_by_city(city: str):
 # SMITH AGENT INTERFACE (Wrapper)
 # ===========================================================================
 
+
 def run_weather_tool(city: str):
     """
     Dispatcher function for weather.
     """
     return get_weather_by_city(city)
+
 
 weather_fetcher = run_weather_tool
 # ===========================================================================
@@ -119,11 +141,11 @@ METADATA = {
         "properties": {
             "city": {
                 "type": "string",
-                "description": "The name of the city (e.g., 'London', 'Tokyo', 'New York')."
+                "description": "The name of the city (e.g., 'London', 'Tokyo', 'New York').",
             }
         },
-        "required": ["city"]
-    }
+        "required": ["city"],
+    },
 }
 
 if __name__ == "__main__":

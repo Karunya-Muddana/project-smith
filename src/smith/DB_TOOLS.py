@@ -11,18 +11,22 @@ import pymongo
 from dotenv import load_dotenv
 
 # load env from project root, not just current folder
-ROOT_ENV = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
+ROOT_ENV = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"
+)
 load_dotenv(ROOT_ENV)
 
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] db_tools: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] db_tools: %(message)s"
+)
 logger = logging.getLogger("db_tools")
 
 MONGO_USER = os.getenv("MONGO_USER", "root")
 MONGO_PASS = os.getenv("MONGO_PASS", "password")
 MONGO_HOST = os.getenv("MONGO_HOST", "localhost")
 MONGO_PORT = os.getenv("MONGO_PORT", "27017")
-DB_NAME    = os.getenv("MONGO_DB", "project_smith")
+DB_NAME = os.getenv("MONGO_DB", "project_smith")
 
 # correct auth source for root user
 MONGO_URI = f"mongodb://{MONGO_USER}:{MONGO_PASS}@{MONGO_HOST}:{MONGO_PORT}/{DB_NAME}?authSource=admin"
@@ -44,27 +48,33 @@ class DBTools:
             self.db = None
 
     def _ensure_conn(self):
-        if self.client is None or self.db is None:     # FIXED HERE
+        if self.client is None or self.db is None:  # FIXED HERE
             return {"status": "error", "error": "DB not connected"}
         return None
 
     def list_collections(self):
-        if (e := self._ensure_conn()): return e
+        if e := self._ensure_conn():
+            return e
         try:
             return {"status": "success", "collections": self.db.list_collection_names()}
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
     def create_collection(self, collection_name: str):
-        if (e := self._ensure_conn()): return e
+        if e := self._ensure_conn():
+            return e
         try:
             self.db.create_collection(collection_name)
-            return {"status": "success", "message": f"Collection '{collection_name}' created."}
+            return {
+                "status": "success",
+                "message": f"Collection '{collection_name}' created.",
+            }
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
     def insert_one(self, collection_name: str, document: dict):
-        if (e := self._ensure_conn()): return e
+        if e := self._ensure_conn():
+            return e
         try:
             res = self.db[collection_name].insert_one(document)
             return {"status": "success", "inserted_id": str(res.inserted_id)}
@@ -72,7 +82,8 @@ class DBTools:
             return {"status": "error", "error": str(e)}
 
     def read_many(self, collection_name: str, query: dict = None, limit: int = 10):
-        if (e := self._ensure_conn()): return e
+        if e := self._ensure_conn():
+            return e
         try:
             query = query or {}
             cursor = self.db[collection_name].find(query).limit(limit)
@@ -85,7 +96,8 @@ class DBTools:
             return {"status": "error", "error": str(e)}
 
     def read_one(self, collection_name: str, query: dict):
-        if (e := self._ensure_conn()): return e
+        if e := self._ensure_conn():
+            return e
         try:
             d = self.db[collection_name].find_one(query)
             if d:
@@ -96,7 +108,9 @@ class DBTools:
 
 
 # ENTRY POINT FOR ORCHESTRATOR
-def run_db_tool(operation: str, collection: str = "", data: dict = None, query: dict = None):
+def run_db_tool(
+    operation: str, collection: str = "", data: dict = None, query: dict = None
+):
     db = DBTools()
     data = data or {}
     query = query or {}

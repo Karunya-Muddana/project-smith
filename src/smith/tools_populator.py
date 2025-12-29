@@ -19,7 +19,9 @@ logger = logging.getLogger("db_populator")
 
 
 # Configuration
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://root:password@localhost:27017/?authSource=admin")
+MONGO_URI = os.getenv(
+    "MONGO_URI", "mongodb://root:password@localhost:27017/?authSource=admin"
+)
 DB_NAME = "project_smith"
 COLLECTION_NAME = "tools"
 TOOLBOX_DIR = os.path.join(os.path.dirname(__file__), "tools")

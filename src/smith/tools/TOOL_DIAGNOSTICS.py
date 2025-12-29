@@ -9,39 +9,53 @@ import os
 from typing import List, Dict, Any
 
 
-
 # ===========================================================================
 # DIAGNOSTIC LOGIC
 # ===========================================================================
+
 
 class ToolDiagnostics:
     def __init__(self):
         self.report = []
 
     def log(self, tool_name: str, status: str, message: str):
-        self.report.append({
-            "tool": tool_name,
-            "status": status,
-            "message": message
-        })
+        self.report.append({"tool": tool_name, "status": status, "message": message})
 
     def run(self) -> List[Dict[str, Any]]:
         # --- LAZY IMPORT (Prevents Circular Import Errors) ---
         try:
             # We assume tool_loader is in the parent/root directory
             sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            from tool_loader import register_all_tools, load_tool_module, load_tool_function
+            from tool_loader import (
+                register_all_tools,
+                load_tool_module,
+                load_tool_function,
+            )
         except ImportError as e:
-            return [{"tool": "SYSTEM", "status": "CRITICAL", "message": f"Could not import tool_loader: {e}"}]
+            return [
+                {
+                    "tool": "SYSTEM",
+                    "status": "CRITICAL",
+                    "message": f"Could not import tool_loader: {e}",
+                }
+            ]
 
         # 1. Scan Files
         try:
             tools = register_all_tools()
         except Exception as e:
-            return [{"tool": "SYSTEM", "status": "CRITICAL", "message": f"Loader Failed: {str(e)}"}]
+            return [
+                {
+                    "tool": "SYSTEM",
+                    "status": "CRITICAL",
+                    "message": f"Loader Failed: {str(e)}",
+                }
+            ]
 
         if not tools:
-            return [{"tool": "SYSTEM", "status": "WARNING", "message": "No tools found."}]
+            return [
+                {"tool": "SYSTEM", "status": "WARNING", "message": "No tools found."}
+            ]
 
         # 2. Validate
         for tool_meta in tools:
@@ -65,9 +79,11 @@ class ToolDiagnostics:
 
         return self.report
 
+
 def run_diagnostics():
     diag = ToolDiagnostics()
     return diag.run()
+
 
 # ===========================================================================
 # METADATA (SMS v1.0)
@@ -80,11 +96,7 @@ METADATA = {
     "description": "Runs a health check on all installed tools. Detects broken imports, missing functions, or invalid metadata.",
     "function": "run_diagnostics",
     "dangerous": False,
-    "parameters": {
-        "type": "object",
-        "properties": {}, 
-        "required": []
-    }
+    "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 

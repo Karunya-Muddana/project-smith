@@ -1,42 +1,27 @@
 """
-SMITH PLANNER — DAG JSON Compiler
----------------------------------
-Takes a natural-language USER REQUEST and compiles it into a JSON
-execution graph for the Smith Orchestration Engine.
+Smith Planner
+------------
+The Architect 📐
 
-Output format:
-
-{
-  "status": "success",
-  "nodes": [
-    {
-      "id": 0,
-      "tool": "<tool_name>",
-      "function": "<function_name>",
-      "inputs": { ... },
-      "depends_on": [],
-      "retry": 2,
-      "on_fail": "continue",
-      "timeout": 45,
-      "metadata": { "purpose": "<short reason>" }
-    }
-  ],
-  "final_output_node": <id>
-}
+This module listens to what you want (e.g., "Find me stocks!") and draws up a blueprint (DAG)
+for the Orchestrator to follow. It uses a clever multi-shot LLM approach to get the JSON just right.
 """
 
 import json
 import logging
 from typing import List, Dict, Any
 
+from smith.config import config
 from smith.tools.LLM_CALLER import call_llm
 
+# Initialize Structured Logger
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] planner: %(message)s",
+    level=logging.DEBUG if config.debug_mode else logging.INFO,
+    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
 )
-logger = logging.getLogger("planner")
+logger = logging.getLogger("smith.planner")
 
+# Using config for constraints
 MAX_PLANNER_ATTEMPTS = 3
 
 # ============================================================
@@ -197,6 +182,7 @@ Return corrected JSON:
 # INTERNAL HELPERS
 # ============================================================
 
+
 def _clean_json_output(text: str) -> str:
     """
     Strip markdown fences + isolate the first JSON object.
@@ -215,7 +201,9 @@ def _clean_json_output(text: str) -> str:
     return text[first_obj:end]
 
 
-def _build_registry_index(available_tools: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def _build_registry_index(
+    available_tools: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
     """
     Build name → metadata index from DB registry.
     """
@@ -231,7 +219,10 @@ def _build_registry_index(available_tools: List[Dict[str, Any]]) -> Dict[str, Di
 # PLAN VALIDATION (DAG + SCHEMA)
 # ============================================================
 
-def _validate_plan(plan: Dict[str, Any], registry: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+
+def _validate_plan(
+    plan: Dict[str, Any], registry: Dict[str, Dict[str, Any]]
+) -> Dict[str, Any]:
     """
     Validate DAG JSON produced by the LLM:
     - Must have nodes[]
@@ -316,9 +307,15 @@ def _validate_plan(plan: Dict[str, Any], registry: Dict[str, Dict[str, Any]]) ->
             return {"ok": False, "error": f"Node {nid}: 'depends_on' must be a list."}
         for dep in depends_on:
             if not isinstance(dep, int):
-                return {"ok": False, "error": f"Node {nid}: depends_on contains non-int id {dep}."}
+                return {
+                    "ok": False,
+                    "error": f"Node {nid}: depends_on contains non-int id {dep}.",
+                }
             if dep not in id_set:
-                return {"ok": False, "error": f"Node {nid}: depends_on references unknown id {dep}."}
+                return {
+                    "ok": False,
+                    "error": f"Node {nid}: depends_on references unknown id {dep}.",
+                }
             if dep >= nid:
                 return {
                     "ok": False,
@@ -327,7 +324,10 @@ def _validate_plan(plan: Dict[str, Any], registry: Dict[str, Dict[str, Any]]) ->
 
         # retry
         if not isinstance(retry, int) or retry < 0:
-            return {"ok": False, "error": f"Node {nid}: 'retry' must be a non-negative integer."}
+            return {
+                "ok": False,
+                "error": f"Node {nid}: 'retry' must be a non-negative integer.",
+            }
 
         # on_fail
         if on_fail not in ("halt", "continue"):
@@ -355,53 +355,56 @@ def _validate_plan(plan: Dict[str, Any], registry: Dict[str, Dict[str, Any]]) ->
 # LLM CALL HELPERS
 # ============================================================
 
-def _call_llm(prompt: str, model: str = "gemini-2.5-pro") -> Dict[str, Any]:
+
+def _call_llm(prompt: str, model: str = None) -> Dict[str, Any]:
     """
     Thin wrapper around smith.tools.LLM_CALLER.call_llm
     to normalize the response shape.
     """
+    target_model = model or config.primary_model
     try:
-        resp = call_llm(prompt, model=model)
+        resp = call_llm(prompt, model=target_model)
     except TypeError:
         resp = call_llm(prompt)
 
     if resp.get("status") != "success":
-        return {"status": "error", "error": resp.get("error", "Planner LLM call failed")}
+        return {
+            "status": "error",
+            "error": resp.get("error", "Planner LLM call failed"),
+        }
     return {"status": "success", "raw": resp.get("response", "")}
 
 
 def _call_llm_for_plan(prompt: str) -> Dict[str, Any]:
-    return _call_llm(prompt, model="gemini-2.5-pro")
+    return _call_llm(prompt)
 
 
 def _call_llm_for_syntax_fix(broken_json: str, parse_error: str) -> Dict[str, Any]:
     """
     Second-layer LLM pass whose ONLY job is to fix JSON syntax.
     """
-    prompt = (
-        SYNTAX_REPAIR_PROMPT
-        .replace("{{BROKEN_JSON}}", broken_json)
-        .replace("{{PARSE_ERROR}}", parse_error)
+    prompt = SYNTAX_REPAIR_PROMPT.replace("{{BROKEN_JSON}}", broken_json).replace(
+        "{{PARSE_ERROR}}", parse_error
     )
-    return _call_llm(prompt, model="gemini-2.5-pro")
+    return _call_llm(prompt)
 
 
 # ============================================================
 # MAIN ENTRYPOINT
 # ============================================================
 
+
 def plan_task(user_msg: str, available_tools: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Core planner entrypoint.
-
-    Flow:
-      1) Build tool registry and printable view.
-      2) Ask LLM to produce DAG JSON using PLANNER_SYSTEM_PROMPT.
-      3) If invalid:
-         - Try REPAIR_PROMPT TEMPLATE
-         - Try syntax-fix pass if json.loads fails
-      4) Validate DAG (schema + dependencies + final_output_node).
-      5) Return validated plan or explicit error object.
+    The Main Planning Function.
+    
+    Think of this as the "Compiler". It takes your fuzzy English and turns it into precise JSON instructions.
+    
+    How it works:
+      1. Looks at all the tools we have (the Registry).
+      2. Asks the LLM: "Hey, how do I solve this user request with these tools?"
+      3. Validates the answer. If the LLM goofed up the JSON, we ask it to fix it (Self-Correction).
+      4. Hand over the solid plan to the Orchestrator!
     """
 
     registry = _build_registry_index(available_tools)
@@ -424,15 +427,12 @@ def plan_task(user_msg: str, available_tools: List[Dict[str, Any]]) -> Dict[str,
 
     for attempt in range(MAX_PLANNER_ATTEMPTS):
         if attempt == 0:
-            prompt = (
-                PLANNER_SYSTEM_PROMPT
-                .replace("{{TOOL_REGISTRY}}", registry_str)
-                .replace("{{USER_REQUEST}}", user_msg)
-            )
+            prompt = PLANNER_SYSTEM_PROMPT.replace(
+                "{{TOOL_REGISTRY}}", registry_str
+            ).replace("{{USER_REQUEST}}", user_msg)
         else:
             prompt = (
-                REPAIR_PROMPT_TEMPLATE
-                .replace("{{TOOL_REGISTRY}}", registry_str)
+                REPAIR_PROMPT_TEMPLATE.replace("{{TOOL_REGISTRY}}", registry_str)
                 .replace("{{LAST_OUTPUT}}", last_raw)
                 .replace("{{ERROR_MSG}}", last_error)
                 .replace("{{USER_REQUEST}}", user_msg)
@@ -460,7 +460,9 @@ def plan_task(user_msg: str, available_tools: List[Dict[str, Any]]) -> Dict[str,
             )
             fix_result = _call_llm_for_syntax_fix(cleaned, parse_msg)
             if fix_result.get("status") != "success":
-                last_error = f"Syntax fix LLM failed: {fix_result.get('error', 'unknown')}"
+                last_error = (
+                    f"Syntax fix LLM failed: {fix_result.get('error', 'unknown')}"
+                )
                 continue
 
             fixed_raw = fix_result["raw"]
@@ -500,7 +502,9 @@ def plan_task(user_msg: str, available_tools: List[Dict[str, Any]]) -> Dict[str,
         return validated_plan
 
     # All attempts failed
-    logger.error("Planner failed after %d attempts: %s", MAX_PLANNER_ATTEMPTS, last_error)
+    logger.error(
+        "Planner failed after %d attempts: %s", MAX_PLANNER_ATTEMPTS, last_error
+    )
     return {
         "status": "error",
         "error": f"Unable to build valid plan with given tools. Reason: {last_error}",

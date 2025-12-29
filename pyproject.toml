@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-smith"
+version = "0.1.0"
+description = "Smith — Zero-Trust Autonomous Agent Runtime"
+readme = "readme.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Karunya Muddana" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "google-generativeai>=0.3.0",
+    "yfinance>=0.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["smith*"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = [
+    "tests",
+]
+python_files = "test_*.py"
+
+[tool.ruff]
+# Hey! This tool checks your code for bugs and bad practices.
+# We enable Pyflakes (F) and pycodestyle (E) to keep things clean.
+select = ["E4", "E7", "E9", "F"]
+ignore = []
+# If you run `ruff check . --fix`, we'll try to auto-fix everything we can.
+fixable = ["ALL"]
+unfixable = []
+# We match Black's line length so they don't fight.
+line-length = 88
+target-version = "py310"
+
+[tool.black]
+# Initializing the 'Black' formatter. It formats your code so it looks professional.
+line-length = 88
+target-version = ['py310']

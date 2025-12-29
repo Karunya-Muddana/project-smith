@@ -1,122 +1,116 @@
 """
-SMITH ORCHESTRATOR — DAG Engine v3.x
------------------------------------
-Execution engine for the Smith Agent framework.
+Smith Orchestration Engine
+-------------------------
+Welcome to the brain of the operation! 🧠
 
-Key ideas:
-- Planner returns a graph of tool calls (nodes with depends_on)
-- Orchestrator executes tools in index order but enforces dependencies logically
-- No string placeholders for tools; only llm_caller.prompt may reference {{STEPS.i.path}}
-- Final LLM synthesis uses the full execution trace, but never hallucinates tools/results
+This is where the magic happens. The Orchestrator takes the plan (DAG) creating by the Planner
+and executes it step-by-step. It's like a conductor leading an orchestra of tools.
+
+Here's how it flows:
+    1. Planner says "Do X, then Y".
+    2. Orchestrator says "On it!", runs X, gets the result, passes it to Y.
+    3. Tool Loader grabs the actual code for X and Y.
+    4. Safety first! If a tool is dangerous, we ask the human (you) for permission.
 """
 
 import json
-import re
-import time
 import logging
+import re
 import threading
-import sys
+import time
 import traceback
 import uuid
-from typing import Any, Callable, Dict, List, Generator, Optional
+import sys
+from typing import Any, Callable, Dict, List, Generator
 
-from dotenv import load_dotenv
+# Third-party imports
+try:
+    from smith.config import config
+    from smith.tools import LLM_CALLER
+    from smith import planner
+    from smith.tools import DB_TOOLS
+    from smith import tool_loader
+except ImportError as e:
+    # Fail fast if the package structure is invalid
+    sys.stderr.write(
+        f"CRITICAL: Failed to import core modules. Ensure 'smith' is installed.\nError: {e}\n"
+    )
+    sys.exit(1)
 
-load_dotenv()
-
-# ============================================================================ #
-# CONFIG                                                                       #
-# ============================================================================ #
-
-DEFAULT_TIMEOUT = 45.0
-MAX_RETRIES = 2
-TRACE_LIMIT_CHARS = 50_000
-MAX_RECURSION_DEPTH = 5
-REQUIRE_APPROVAL_FOR_DANGEROUS_TOOLS = True
-DEBUG_MODE = False
-
-LLM_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
-
+# Initialize Structured Logger
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] smith_engine: %(message)s",
+    level=logging.DEBUG if config.debug_mode else logging.INFO,
+    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
     datefmt="%H:%M:%S",
 )
-logger = logging.getLogger("smith_engine")
+logger = logging.getLogger("smith.orchestrator")
 
 TRACE_VERSION = "3.0"
-
-# Only resolve placeholders inside prompts for llm_caller
 PLACEHOLDER_RE = re.compile(r"\{\{\s*STEPS\.(\d+)\.([^}]+)\}\}", re.IGNORECASE)
 
+# Global Service Instances (Lazy Loaded)
+_db_service = None
+
+
+def get_db_service():
+    """Singleton accessor for DB Service."""
+    global _db_service
+    if _db_service is None:
+        try:
+            _db_service = DB_TOOLS.DBTools()
+            # Lightweight connectivity check
+            res = _db_service.read_many("tools", {})
+            if res.get("status") == "error":
+                logger.warning(f"DB Check Failed: {res.get('error')}")
+        except Exception as e:
+            logger.critical(f"Database unavailable: {e}")
+            raise RuntimeError("Core services unavailable. Check configuration.") from e
+    return _db_service
+
+
+def reset_services():
+    """Reset global services. Used for testing."""
+    global _db_service
+    _db_service = None
+
+
+def execute_with_timeout(
+    fn: Callable, args: Dict[str, Any], timeout: float
+) -> Dict[str, Any]:
+    """
+    Run a tool function in a thread with a hard timeout.
+    Normalize output to {status, result|error}.
+    """
+    res: Dict[str, Any] = {"ok": False, "value": None, "error": None}
+
+    def target():
+        try:
+            res["value"] = fn(**args)
+            res["ok"] = True
+        except Exception as exc:
+            res["error"] = str(exc)
+            if config.debug_mode:
+                traceback.print_exc()
+
+    th = threading.Thread(target=target, daemon=True)
+    th.start()
+    th.join(timeout)
+
+    if th.is_alive():
+        return {"status": "error", "error": f"Execution timed out ({timeout}s)"}
+
+    if not res["ok"]:
+        return {"status": "error", "error": res["error"]}
+
+    out = res["value"]
+    if isinstance(out, dict):
+        if "status" in out:
+            return out
+        return {"status": "success", "result": out}
+    return {"status": "success", "result": out}
+
 
 # ============================================================================ #
-# DEPENDENCY INJECTION                                                        #
-# ============================================================================ #
-
-USE_MOCK = False
-real_call_llm: Optional[Callable] = None
-real_plan_task: Optional[Callable] = None
-real_load_tool_function: Optional[Callable] = None
-real_db = None
-
-
-def probe_environment() -> bool:
-    """
-    Try to wire real production pieces.
-    Falls back to MOCK mode if import/DB fails.
-    """
-    global real_call_llm, real_plan_task, real_load_tool_function, real_db, USE_MOCK
-    try:
-        from smith.tools.LLM_CALLER import call_llm
-        from smith.planner import plan_task
-        from smith.tools.DB_TOOLS import DBTools
-        from smith.tool_loader import load_tool_function
-
-        real_call_llm = call_llm
-        real_plan_task = plan_task
-        real_load_tool_function = load_tool_function
-        real_db = DBTools()
-
-        logger.info("Probing Database connection...")
-        # light-touch read just to confirm connectivity
-        _ = real_db.read_many("tools", {})
-        return True
-    except Exception as e:
-        logger.warning(f"Production modules/DB missing or unhealthy ({e}). Using MOCK mode.")
-        USE_MOCK = True
-        return False
-
-
-if not probe_environment():
-
-    class MockDB:
-        def read_many(self, *_args, **_kwargs):
-            return {"status": "success", "data": []}
-
-        def read_one(self, *_args, **_kwargs):
-            return {"status": "success", "data": {}}
-
-    def mock_call_llm(prompt: str, model: str = "default") -> Dict[str, Any]:
-        return {"status": "success", "response": "[MOCK LLM RESPONSE] " + prompt[:200]}
-
-    def mock_plan_task(user_msg: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
-        # trivial no-op plan
-        return {"status": "success", "steps": []}
-
-    def mock_load_tool_function(module: str, fn: str) -> Callable:
-        def _f(**kwargs):
-            return {
-                "status": "success",
-                "result": {"module": module, "fn": fn, "args": kwargs},
-            }
-
-        return _f
-
-    real_db = MockDB()
-    real_call_llm = mock_call_llm
-    real_plan_task = mock_plan_task
-    real_load_tool_function = mock_load_tool_function
 
 
 # ============================================================================ #
@@ -203,40 +197,6 @@ def resolve_prompt_placeholders(prompt: str, trace: List[Dict[str, Any]]) -> str
     return PLACEHOLDER_RE.sub(repl, prompt)
 
 
-def execute_with_timeout(fn: Callable, args: Dict[str, Any], timeout: float) -> Dict[str, Any]:
-    """
-    Run a tool function in a thread with a hard timeout.
-    Normalize output to {status, result|error}.
-    """
-    res: Dict[str, Any] = {"ok": False, "value": None, "error": None}
-
-    def target():
-        try:
-            res["value"] = fn(**args)
-            res["ok"] = True
-        except Exception as exc:
-            res["error"] = str(exc)
-            if DEBUG_MODE:
-                traceback.print_exc()
-
-    th = threading.Thread(target=target, daemon=True)
-    th.start()
-    th.join(timeout)
-
-    if th.is_alive():
-        return {"status": "error", "error": f"Execution timed out ({timeout}s)"}
-
-    if not res["ok"]:
-        return {"status": "error", "error": res["error"]}
-
-    out = res["value"]
-    if isinstance(out, dict):
-        if "status" in out:
-            return out
-        return {"status": "success", "result": out}
-    return {"status": "success", "result": out}
-
-
 # ============================================================================ #
 # ORCHESTRATOR (DAG-AWARE)                                                    #
 # ============================================================================ #
@@ -244,43 +204,14 @@ def execute_with_timeout(fn: Callable, args: Dict[str, Any], timeout: float) -> 
 
 def smith_orchestrator(
     user_msg: str,
-    require_approval: bool = REQUIRE_APPROVAL_FOR_DANGEROUS_TOOLS,
+    require_approval: bool = config.require_approval,
 ) -> Generator[Dict[str, Any], None, None]:
     """
-    DAG-aware orchestrator.
-
-    Planner compatibility:
-
-    1) New DAG format:
-       {
-         "status": "success",
-         "nodes": [
-            {
-              "id": 0,
-              "tool": "google_search",
-              "function": "google_search",
-              "inputs": { "query": "..." },
-              "depends_on": [],
-              "retry": 2,
-              "timeout": 45,
-              "on_fail": "continue",
-              "metadata": {...}
-            },
-            ...
-         ],
-         "final_output_node": 7
-       }
-
-    2) Legacy sequence format:
-       {
-         "status": "success",
-         "steps": [
-            { "tool": "google_search", "function": "google_search", "args": {...} },
-            ...
-         ]
-       }
+    The Main Event Loop.
+    
+    This generator yields events so the UI (or CLI) can show you exactly what's happening
+    in real-time. No more staring at a blank screen wondering if it hung!
     """
-
     run_id = str(uuid.uuid4())
     yield {
         "type": "status",
@@ -291,7 +222,8 @@ def smith_orchestrator(
 
     # 1) Read tool registry -------------------------------------------------
     try:
-        tools_resp = real_db.read_many("tools", {})
+        service = get_db_service()
+        tools_resp = service.read_many("tools", {})
         if tools_resp.get("status") != "success":
             raise RuntimeError(tools_resp.get("error", "Unknown DB error"))
         tools_list = tools_resp.get("data", []) or []
@@ -304,7 +236,7 @@ def smith_orchestrator(
 
     # 2) Call planner -------------------------------------------------------
     try:
-        plan = real_plan_task(user_msg, tools_list)
+        plan = planner.plan_task(user_msg, tools_list)
         if not isinstance(plan, dict):
             raise RuntimeError("Planner returned non-dict result")
         if plan.get("status") == "error":
@@ -354,12 +286,22 @@ def smith_orchestrator(
             if not isinstance(d, int) or d < 0 or d >= len(trace):
                 msg = f"Step {idx} depends on invalid step index {d}. Planner bug."
                 logger.error(msg)
-                yield {"type": "error", "message": msg, "run_id": run_id, "step_id": step_id}
+                yield {
+                    "type": "error",
+                    "message": msg,
+                    "run_id": run_id,
+                    "step_id": step_id,
+                }
                 return
             if trace[d].get("status") != "success":
                 msg = f"Step {idx} blocked: dependency step {d} did not succeed."
                 logger.error(msg)
-                yield {"type": "error", "message": msg, "run_id": run_id, "step_id": step_id}
+                yield {
+                    "type": "error",
+                    "message": msg,
+                    "run_id": run_id,
+                    "step_id": step_id,
+                }
                 return
 
         yield {
@@ -377,7 +319,12 @@ def smith_orchestrator(
         if not meta:
             msg = f"Tool '{tool_name}' not registered in DB."
             logger.error(msg)
-            yield {"type": "error", "message": msg, "run_id": run_id, "step_id": step_id}
+            yield {
+                "type": "error",
+                "message": msg,
+                "run_id": run_id,
+                "step_id": step_id,
+            }
             return
 
         if require_approval and meta.get("dangerous", False):
@@ -392,13 +339,18 @@ def smith_orchestrator(
 
         # Load tool function
         try:
-            fn = real_load_tool_function(meta["module"], fn_name)
+            fn = tool_loader.load_tool_function(meta["module"], fn_name)
             if not callable(fn):
                 raise RuntimeError("Loaded object is not callable")
         except Exception as e:
             msg = f"Failed to load tool '{tool_name}': {e}"
             logger.exception(msg)
-            yield {"type": "error", "message": msg, "run_id": run_id, "step_id": step_id}
+            yield {
+                "type": "error",
+                "message": msg,
+                "run_id": run_id,
+                "step_id": step_id,
+            }
             return
 
         # Inputs: support both "inputs" (new) and "args" (legacy)
@@ -419,16 +371,16 @@ def smith_orchestrator(
         }
 
         # Per-node retry/timeout (fall back to global defaults)
-        node_retries = node.get("retry", MAX_RETRIES)
-        node_timeout = node.get("timeout", DEFAULT_TIMEOUT)
+        node_retries = node.get("retry", config.max_retries)
+        node_timeout = node.get("timeout", config.default_timeout)
         try:
             node_retries = int(node_retries)
         except Exception:
-            node_retries = MAX_RETRIES
+            node_retries = config.max_retries
         try:
             node_timeout = float(node_timeout)
         except Exception:
-            node_timeout = DEFAULT_TIMEOUT
+            node_timeout = config.default_timeout
 
         trace_entry: Dict[str, Any] = {
             "run_id": run_id,
@@ -506,7 +458,9 @@ def smith_orchestrator(
                 "run_id": run_id,
                 "step_id": step_id,
             }
-            logger.error(f"Step {idx + 1} ({tool_name}) failed in {duration}s: {payload_str}")
+            logger.error(
+                f"Step {idx + 1} ({tool_name}) failed in {duration}s: {payload_str}"
+            )
             return
 
     # 4) Final synthesis from trace ----------------------------------------
@@ -527,8 +481,8 @@ def smith_orchestrator(
         ]
         ctx = {"run_id": run_id, "trace_version": TRACE_VERSION, "steps": compact_trace}
         ctx_str = safe_serialize(ctx)
-        if len(ctx_str) > TRACE_LIMIT_CHARS:
-            ctx_str = ctx_str[:TRACE_LIMIT_CHARS] + "...[TRUNCATED]"
+        if len(ctx_str) > config.trace_limit_chars:
+            ctx_str = ctx_str[: config.trace_limit_chars] + "...[TRUNCATED]"
 
         final_prompt = (
             f"User Request: {user_msg}\n\n"
@@ -539,8 +493,8 @@ def smith_orchestrator(
             "3. Do not invent URLs, numbers, or tools that are not present.\n"
         )
 
-        model = LLM_MODELS[0] if LLM_MODELS else "default"
-        final = real_call_llm(final_prompt, model=model)
+        model = config.primary_model
+        final = LLM_CALLER.call_llm(final_prompt, model=model)
         yield {"type": "final_answer", "payload": final, "run_id": run_id}
 
     except Exception as e:
@@ -554,11 +508,12 @@ def smith_orchestrator(
 # ============================================================================ #
 
 if __name__ == "__main__":
-    print(f"\n[SYSTEM] SMITH ENGINE v3.x (DAG)")
-    print(f"[SYSTEM] Environment: {'MOCK' if USE_MOCK else 'PRODUCTION'}")
+    print(f"\n[SYSTEM] SMITH ENGINE v{TRACE_VERSION}")
+    print(f"[SYSTEM] Log Level: {'DEBUG' if config.debug_mode else 'INFO'}")
 
     try:
         while True:
+            # Simple CLI REPL
             q = input("\n> Command (or 'exit'): ").strip()
             if q.lower() in {"exit", "quit"}:
                 break
@@ -574,10 +529,11 @@ if __name__ == "__main__":
                 elif etype == "step_start":
                     print(f"[EXEC] Step {evt['step_index'] + 1}: {evt['tool']}...")
                 elif etype == "debug_args":
-                    args_str = safe_serialize(evt.get("args", {}))
-                    if len(args_str) > 200:
-                        args_str = args_str[:200] + "..."
-                    print(f"   ↳ [INPUT] {args_str}")
+                    if config.debug_mode:
+                        args_str = safe_serialize(evt.get("args", {}))
+                        if len(args_str) > 200:
+                            args_str = args_str[:200] + "..."
+                        print(f"   ↳ [INPUT] {args_str}")
                 elif etype == "approval_required":
                     print(f"[SECURITY] {msg}")
                     auth = input(">>> Authorize? (y/N): ").strip().lower()
@@ -597,7 +553,9 @@ if __name__ == "__main__":
                         print(f"[FAIL] {evt['tool']}")
                 elif etype == "final_answer":
                     res = evt.get("payload", {})
-                    text = res.get("response", res) if isinstance(res, dict) else str(res)
+                    text = (
+                        res.get("response", res) if isinstance(res, dict) else str(res)
+                    )
                     print(f"\n>>> FINAL ANSWER: {text}")
                 elif etype == "error":
                     print(f"[ERROR] {msg}")

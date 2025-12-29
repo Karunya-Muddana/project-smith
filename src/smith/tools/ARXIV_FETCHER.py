@@ -10,6 +10,7 @@ import requests
 # Core Logic
 # ------------------------------
 
+
 def perform_arxiv_search(query: str, max_results: int = 5):
     """
     Fetch academic papers from arXiv based on a search query.
@@ -20,11 +21,7 @@ def perform_arxiv_search(query: str, max_results: int = 5):
 
     try:
         url = "https://export.arxiv.org/api/query"
-        params = {
-            "search_query": query,
-            "start": 0,
-            "max_results": int(max_results)
-        }
+        params = {"search_query": query, "start": 0, "max_results": int(max_results)}
 
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
@@ -38,17 +35,11 @@ def perform_arxiv_search(query: str, max_results: int = 5):
             title = item.split("<title>")[1].split("</title>")[0].strip()
             summary = item.split("<summary>")[1].split("</summary>")[0].strip()
             link = item.split("<id>")[1].split("</id>")[0].strip()
-            authors = [
-                a.split("</name>")[0].strip()
-                for a in item.split("<name>")[1:]
-            ]
+            authors = [a.split("</name>")[0].strip() for a in item.split("<name>")[1:]]
 
-            results.append({
-                "title": title,
-                "authors": authors,
-                "summary": summary,
-                "link": link
-            })
+            results.append(
+                {"title": title, "authors": authors, "summary": summary, "link": link}
+            )
 
         return {"status": "success", "result": results}
 
@@ -59,6 +50,7 @@ def perform_arxiv_search(query: str, max_results: int = 5):
 # =====================================================================
 # SMITH AGENT INTERFACE (Wrapper)
 # =====================================================================
+
 
 def run_arxiv_search(query: str, max_results: int = 5):
     return perform_arxiv_search(query, int(max_results))
@@ -84,14 +76,14 @@ METADATA = {
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Keyword(s) for paper search, e.g. 'transformers', 'reinforcement learning', etc."
+                "description": "Keyword(s) for paper search, e.g. 'transformers', 'reinforcement learning', etc.",
             },
             "max_results": {
                 "type": "integer",
                 "description": "Number of papers to return",
-                "default": 5
-            }
+                "default": 5,
+            },
         },
-        "required": ["query"]
-    }
+        "required": ["query"],
+    },
 }
