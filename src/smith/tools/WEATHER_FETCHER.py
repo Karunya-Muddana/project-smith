@@ -136,6 +136,8 @@ METADATA = {
     "description": "Get the current weather forecast (temperature, condition, wind) for any city globally.",
     "function": "run_weather_tool",
     "dangerous": False,
+    "domain": "data",
+    "output_type": "numeric",
     "parameters": {
         "type": "object",
         "properties": {

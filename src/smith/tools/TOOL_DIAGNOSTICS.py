@@ -96,6 +96,8 @@ METADATA = {
     "description": "Runs a health check on all installed tools. Detects broken imports, missing functions, or invalid metadata.",
     "function": "run_diagnostics",
     "dangerous": False,
+    "domain": "system",
+    "output_type": "diagnostic",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 

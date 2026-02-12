@@ -1,6 +1,6 @@
 import sys
 import time
-from smith.orchestrator import smith_orchestrator
+from smith.core.orchestrator import smith_orchestrator
 
 QUERY = """
 I need a market and tech brief.

@@ -1,5 +1,5 @@
 import sys
-from smith.orchestrator import smith_orchestrator
+from smith.core.orchestrator import smith_orchestrator
 
 # Simple query that should trigger LLM directly or Weather tool if registered
 # We'll use a generic LLM query first to test end-to-end.

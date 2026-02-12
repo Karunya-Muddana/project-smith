@@ -13,13 +13,10 @@ from typing import List, Dict, Any
 
 from smith.config import config
 from smith.tools.LLM_CALLER import call_llm
+from smith.core.logging import get_smith_logger
 
 # Initialize Structured Logger
-logging.basicConfig(
-    level=logging.DEBUG if config.debug_mode else logging.INFO,
-    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
-)
-logger = logging.getLogger("smith.planner")
+logger = get_smith_logger("smith.planner")
 
 # Using config for constraints
 MAX_PLANNER_ATTEMPTS = 3
@@ -29,102 +26,72 @@ MAX_PLANNER_ATTEMPTS = 3
 # ============================================================
 
 PLANNER_SYSTEM_PROMPT = """
-You are not a chatbot.
-You are a COMPILER that transforms a natural-language USER REQUEST
-into a JSON EXECUTION GRAPH for an autonomous agent.
+You are a COMPILER that transforms a user request into a JSON execution graph.
+You do NOT write text. You do NOT answer the request. You ONLY produce the JSON graph.
 
-You do NOT write text.
-You do NOT answer the request.
-You ONLY produce the graph.
+──────────────────── CRITICAL: NO HALLUCINATIONS ────────────────────
+You must ONLY use tools listed in the TOOL REGISTRY below.
+If a tool is not listed, it DOES NOT EXIST. Do not invent tools.
+Do not invent parameters. Use EXACT parameter names.
 
-Return ONLY a single valid JSON object. No markdown. No commentary.
+If you cannot solve the request with available tools, return:
+{ "status": "error", "error": "Cannot fulfill request with available tools." }
 
-──────────────────── FUNDAMENTAL CONTRACT ────────────────────
-Your output represents a DAG (Directed Acyclic Graph) of tool calls.
-Each node = ONE concrete tool execution.
-
-You MUST follow the TOOL REGISTRY exactly — every tool has
-required parameters and correct function names. Do NOT improvise.
-
-──────────────────── REQUIRED FIELDS FOR EVERY NODE ────────────────────
-Each node MUST have these exact fields:
+──────────────────── GRAPH RULES ────────────────────
+Each node in "nodes" represents ONE tool execution.
 {
-  "id"          : integer (starting at 0 → 1 → 2 ... no gaps),
-  "tool"        : string (must match TOOL REGISTRY),
-  "function"    : string (must match TOOL REGISTRY),
-  "inputs"      : object (keys MUST match the tool parameter names),
-  "depends_on"  : array of integer ids (dependencies; may be empty),
-  "retry"       : integer (usually 2),
-  "on_fail"     : "halt" | "continue",
-  "timeout"     : integer seconds (usually 45),
-  "metadata"    : object with at least:
-                  { "purpose": "<short reason for running this node>" }
+  "id": <int, MUST START AT 0 AND INCREMENT BY 1>,
+  "thought": "<string, reasoning>",
+  "tool": "<string, MUST MATCH REGISTRY EXACTLY>",
+  "function": "<string, MUST MATCH REGISTRY EXACTLY>",
+  "inputs": { <key>: <value> }, // Must match strict schema
+  "depends_on": [ <int_ids_of_previous_steps> ],
+  "retry": 2,
+  "on_fail": "halt",
+  "timeout": 45
 }
 
-──────────────────── TOOL INPUT RULES ────────────────────
-You MUST respect EXACT parameter names from the TOOL REGISTRY:
-• google_search       → inputs = { "query": "<search string>" }
-• weather_fetcher     → inputs = { "city": "<city name>" }
-• finance_fetcher     → inputs = { "operation": "price", "symbol": "<ticker>" }
-• llm_caller          → inputs = { "prompt": "<clear instruction>" }
+──────────────────── MULTI-TOOL RULES ────────────────────
+1. IDS MUST be 0-based indices (0, 1, 2...).
+2. Identify dependencies explicitly. If Step 1 needs Step 0's output, Step 1 MUST have "depends_on": [0].
+3. Use "llm_caller" SPARINGLY for logical processing, summarization, or decision making.
+4. The FINAL node must be the one producing the user's answer (usually an llm_caller node).
 
-Do NOT create new parameter names.
-Do NOT remove required parameters.
-Do NOT rename parameters.
-Do NOT embed placeholders like {{STEPS.0}} anywhere.
+──────────────────── COST CONSTRAINTS ────────────────────
+⚠️ MINIMIZE PLAN SIZE - Each tool has a cost:
+  - Data tools (google_search, finance_fetcher, weather_fetcher, arxiv_search): 1 point
+  - Computation tools (numeric_computer, news_clusterer): 2 points
+  - LLM reasoning (llm_caller): 5 points
+  - System tools (tool_diagnostics): 1 point
 
-──────────────────── DEPENDENCY RULES ────────────────────
-• If a tool must run after another → list the dependency in `depends_on`.
-• Do NOT place future ids (no cycles).
-• If no dependency is needed → use [] (parallel-eligible).
+TARGET: Minimize total cost. Prefer data + computation over excessive LLM calls.
+CONSTRAINT: Use minimum number of tools required.
+PENALTY: Plans with >3 llm_caller nodes will be rejected.
 
-──────────────────── MULTI-LLM RULES (CRITICAL) ────────────────────
-A USER REQUEST may require multiple llm_caller nodes.
-You MUST follow all of these rules:
+──────────────────── TOOL DOMAIN AWARENESS ────────────────────
+⚠️ NEVER ask llm_caller to produce:
+  - Numeric data (prices, statistics, trends) → Use numeric_computer
+  - Real-time facts (current weather, stock prices) → Use data tools
+  - Factual claims without sources → Use google_search or other data tools
+  - Article clustering → Use news_clusterer
 
-1) If ANY kind of report / summary / comparison / ranking / insight /
-   pitch / speech / storyline / thread / post is requested → include llm_caller.
+If you CANNOT fulfill the request with available tools, you MUST return:
+{ "status": "error", "error": "Missing capability: <describe what's missing>" }
 
-2) If the USER REQUEST asks for multiple narrative outputs (e.g. report → summary → tweet thread → speech):
-   → You MUST generate SEPARATE llm_caller nodes.
+Example missing capabilities:
+  - "No tool for image processing" 
+  - "No tool for database access"
+  - "No tool for sending emails"
 
-3) Chaining:
-   • Every llm_caller AFTER the first one MUST depend_on the PREVIOUS llm_caller.
-   • Do NOT skip. Do NOT branch. A → B → C exact chain.
-   Example: If node 7 is llm_caller and node 9 is the next llm_caller,
-            then node 9 MUST have "depends_on": [7].
+──────────────────── TOOL INPUTS ────────────────────
+DO NOT use placeholders like {{STEPS...}} unless absolutely necessary and supported by the orchestrator.
+Prefer implicit context passing via "depends_on". The orchestrator passes results automatically.
 
-4) The LAST llm_caller in the chain MUST be the "final_output_node".
-
-5) llm_caller.prompt MUST be a complete instruction on its own.
-   It MUST NOT say things like “use the report above” or “based on earlier data”.
-   It MUST specify WHAT to produce, not WHERE the data comes from.
-   The orchestrator injects context automatically.
-
-──────────────────── GENERAL SAFETY RULES ────────────────────
-• NO string placeholders like {{...}} anywhere in any node.
-• NO explanation outside JSON.
-• NO markdown code fences.
-• NO text before or after the JSON.
-
-──────────────────── OUTPUT FORMAT (MUST MATCH EXACTLY) ────────────────────
+──────────────────── OUTPUT FORMAT ────────────────────
 {
   "status": "success",
-  "nodes": [
-     {
-       "id": 0,
-       "tool": "<tool_name>",
-       "function": "<function_name>",
-       "inputs": { ... },
-       "depends_on": [],
-       "retry": 2,
-       "on_fail": "continue",
-       "timeout": 45,
-       "metadata": { "purpose": "<short reason>" }
-     },
-     ...
-  ],
-  "final_output_node": <id_of_last_llm_caller_or_last_node_if_no_llm>
+  "nodes": [ ... ],
+  "final_output_node": <int_id>
 }
 
 TOOL REGISTRY:
@@ -132,29 +99,28 @@ TOOL REGISTRY:
 
 USER REQUEST:
 {{USER_REQUEST}}
-
-JSON PLAN:
 """
 
 
 REPAIR_PROMPT_TEMPLATE = """
-The previous JSON plan for the autonomous agent was INVALID.
+⚠️ PLANNER ERROR: YOUR PREVIOUS PLAN WAS INVALID ⚠️
 
-You MUST RETURN a corrected JSON plan following ALL rules and constraints.
+You violated the strict tool registry or syntax rules.
+You must regenerate the plan correcting the specific error below.
 
-TOOL REGISTRY:
-{{TOOL_REGISTRY}}
+ERROR:
+{{ERROR_MSG}}
 
 INVALID PLAN:
 {{LAST_OUTPUT}}
 
-VALIDATION ERROR:
-{{ERROR_MSG}}
+TOOL REGISTRY (ONLY USE THESE):
+{{TOOL_REGISTRY}}
 
 USER REQUEST:
 {{USER_REQUEST}}
 
-Return ONLY the corrected JSON object. No commentary.
+Return ONLY the corrected JSON. No apologies.
 """
 
 SYNTAX_REPAIR_PROMPT = """
@@ -208,11 +174,101 @@ def _build_registry_index(
     Build name → metadata index from DB registry.
     """
     index: Dict[str, Dict[str, Any]] = {}
-    for t in available_tools:
-        name = t.get("name")
-        if name:
-            index[name] = t
+    for meta in available_tools:
+        tool_name = meta.get("name")
+        if tool_name:
+            index[tool_name] = meta
     return index
+
+
+def _validate_plan_constraints(plan_obj: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Validate plan against constraints:
+    - LLM usage limit (max 3 calls)
+    - Minimum tool usage
+    
+    Returns:
+        {"valid": bool, "violations": List[str], "warnings": List[str]}
+    """
+    violations = []
+    warnings = []
+    
+    nodes = plan_obj.get("nodes", [])
+    
+    # Count LLM calls
+    llm_calls = sum(1 for node in nodes if node.get("tool") == "llm_caller")
+    
+    if llm_calls > 3:
+        violations.append(f"Excessive LLM usage: {llm_calls} calls (limit: 3)")
+    
+    if llm_calls > 2:
+        warnings.append(f"High LLM usage: {llm_calls} calls - consider using computation tools")
+    
+    # Check single-step plans that use LLM for data retrieval
+    if len(nodes) == 1 and llm_calls == 1:
+        node = nodes[0]
+        thought = node.get("thought", "").lower()
+        if any(keyword in thought for keyword in ["price", "weather", "stock", "current", "fetch", "get data"]):
+            warnings.append("Single LLM step for data retrieval - consider using data tools")
+    
+    return {
+        "valid": len(violations) == 0,
+        "violations": violations,
+        "warnings": warnings
+    }
+
+
+def _detect_capability_gaps(plan_obj: Dict[str, Any], available_tools: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Detect if plan tries to do things beyond available tool capabilities.
+    
+    Returns:
+        {"has_gaps": bool, "gaps": List[str], "suggestions": List[str]}
+    """
+    gaps = []
+    suggestions = []
+    
+    nodes = plan_obj.get("nodes", [])
+    
+    # Check if LLM is being asked to compute numbers
+    for node in nodes:
+        if node.get("tool") == "llm_caller":
+            thought = node.get("thought", "").lower()
+            prompt = node.get("inputs", {}).get("prompt", "").lower()
+            
+            # Numeric computation detected
+            if any(kw in thought or kw in prompt for kw in ["calculate", "compute", "trend", "percentage", "statistics"]):
+                if "numeric_computer" in available_tools:
+                    suggestions.append("Consider using 'numeric_computer' instead of LLM for calculations")
+                else:
+                    gaps.append("Numeric computation requested but numeric_computer not available")
+            
+            # Clustering detected
+            if any(kw in thought or kw in prompt for kw in ["cluster", "group", "categorize articles"]):
+                if "news_clusterer" in available_tools:
+                    suggestions.append("Consider using 'news_clusterer' for article clustering")
+                else:
+                    gaps.append("Article clustering requested but news_clusterer not available")
+    
+    # Check for impossible requests
+    impossible_keywords = {
+        "image": "image processing",
+        "database": "database access",
+        "email": "email sending",
+        "file": "file system access",
+        "video": "video processing"
+    }
+    
+    user_request_text = str(plan_obj).lower()
+    for keyword, capability in impossible_keywords.items():
+        if keyword in user_request_text and keyword not in [t.lower() for t in available_tools.keys()]:
+            gaps.append(f"No tool available for {capability}")
+    
+    return {
+        "has_gaps": len(gaps) > 0,
+        "gaps": gaps,
+        "suggestions": suggestions
+    }
 
 
 # ============================================================
@@ -411,8 +467,11 @@ def plan_task(user_msg: str, available_tools: List[Dict[str, Any]]) -> Dict[str,
     minimal_view = [
         {
             "name": meta.get("name"),
+            "description": meta.get("description"),
             "function": meta.get("function"),
             "parameters": meta.get("parameters"),
+            "example": meta.get("example"),
+            "tags": meta.get("tags"),
         }
         for meta in registry.values()
     ]
@@ -494,6 +553,29 @@ def plan_task(user_msg: str, available_tools: List[Dict[str, Any]]) -> Dict[str,
         validated_plan = validation["plan"]
         if "status" not in validated_plan:
             validated_plan["status"] = "success"
+        
+        # Post-validation: Check constraints and capability gaps
+        constraint_check = _validate_plan_constraints(validated_plan)
+        if not constraint_check["valid"]:
+            # Hard violations - reject plan
+            last_error = "; ".join(constraint_check["violations"])
+            logger.warning("Plan violates constraints on attempt %d: %s", attempt + 1, last_error)
+            continue
+        
+        # Soft warnings - log but don't reject
+        if constraint_check["warnings"]:
+            for warning in constraint_check["warnings"]:
+                logger.warning("Plan warning: %s", warning)
+        
+        # Capability gap detection
+        capability_check = _detect_capability_gaps(validated_plan, registry)
+        if capability_check["has_gaps"]:
+            for gap in capability_check["gaps"]:
+                logger.warning("Capability gap detected: %s", gap)
+        
+        if capability_check["suggestions"]:
+            for suggestion in capability_check["suggestions"]:
+                logger.info("Optimization suggestion: %s", suggestion)
 
         logger.info(
             "Planner produced a valid DAG with %d node(s).",

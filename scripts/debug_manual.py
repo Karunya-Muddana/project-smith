@@ -43,7 +43,7 @@ with (
     MockLLM.return_value = {"status": "success", "response": "FINAL"}
 
     # Import orchestrator
-    from smith.orchestrator import smith_orchestrator, reset_services
+    from smith.core.orchestrator import smith_orchestrator, reset_services
 
     reset_services()
     try:

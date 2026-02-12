@@ -1,0 +1,239 @@
+{
+  "version": "1.0",
+  "auto_generated": true,
+  "tools": [
+    {
+      "name": "arxiv_search",
+      "description": "Fetch academic papers from arXiv by keyword search.",
+      "function": "run_arxiv_search",
+      "dangerous": false,
+      "domain": "data",
+      "output_type": "factual",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Keyword(s) for paper search, e.g. 'transformers', 'reinforcement learning', etc."
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Number of papers to return",
+            "default": 5
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "module": "smith.tools.ARXIV_FETCHER"
+    },
+    {
+      "name": "finance_fetcher",
+      "description": "Get stock data. Use operation='price' for current value.",
+      "function": "run_finance_tool",
+      "dangerous": false,
+      "domain": "data",
+      "output_type": "numeric",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "price",
+              "history",
+              "summary"
+            ]
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "period": {
+            "type": "string",
+            "default": "1mo"
+          }
+        },
+        "required": [
+          "symbol"
+        ]
+      },
+      "module": "smith.tools.FINANCE"
+    },
+    {
+      "name": "google_search",
+      "description": "Search Google for real-time information, news, or facts.",
+      "function": "run_google_search",
+      "dangerous": false,
+      "domain": "data",
+      "output_type": "factual",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search keywords."
+          },
+          "num_results": {
+            "type": "integer",
+            "description": "Number of results to return (default 3).",
+            "default": 3
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "module": "smith.tools.GOOGLE_SEARCHER"
+    },
+    {
+      "name": "llm_caller",
+      "description": "Access a Large Language Model (Llama 3.3 70B via Groq) to summarize text, answer questions, or write code.",
+      "function": "run_llm_tool",
+      "dangerous": false,
+      "domain": "reasoning",
+      "output_type": "synthesis",
+      "prohibited_outputs": [
+        "numeric_data",
+        "factual_claims",
+        "real_time_data"
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "default": "default"
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      },
+      "module": "smith.tools.LLM_CALLER"
+    },
+    {
+      "name": "news_clusterer",
+      "description": "Cluster news articles or text items by semantic similarity. Returns themes, counts, and metrics.",
+      "function": "run_clustering_tool",
+      "dangerous": false,
+      "domain": "computation",
+      "output_type": "structured",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "articles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "snippet": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "List of articles to cluster"
+          },
+          "similarity_threshold": {
+            "type": "number",
+            "default": 0.3,
+            "description": "Minimum similarity (0-1) to group items together"
+          }
+        },
+        "required": [
+          "articles"
+        ]
+      },
+      "module": "smith.tools.NEWS_CLUSTERER"
+    },
+    {
+      "name": "numeric_computer",
+      "description": "Perform deterministic calculations: trends, percent changes, statistics. Use this instead of asking LLM to compute numbers.",
+      "function": "run_numeric_tool",
+      "dangerous": false,
+      "domain": "computation",
+      "output_type": "numeric",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "trend",
+              "percent_change",
+              "statistics"
+            ],
+            "description": "Type of calculation"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "List of numeric values for trend or statistics"
+          },
+          "old_value": {
+            "type": "number",
+            "description": "Old value for percent_change"
+          },
+          "new_value": {
+            "type": "number",
+            "description": "New value for percent_change"
+          },
+          "window": {
+            "type": "integer",
+            "description": "Window size for moving average (optional)"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "module": "smith.tools.NUMERIC_COMPUTER"
+    },
+    {
+      "name": "tool_diagnostics",
+      "description": "Runs a health check on all installed tools. Detects broken imports, missing functions, or invalid metadata.",
+      "function": "run_diagnostics",
+      "dangerous": false,
+      "domain": "system",
+      "output_type": "diagnostic",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "module": "smith.tools.TOOL_DIAGNOSTICS"
+    },
+    {
+      "name": "weather_fetcher",
+      "description": "Get the current weather forecast (temperature, condition, wind) for any city globally.",
+      "function": "run_weather_tool",
+      "dangerous": false,
+      "domain": "data",
+      "output_type": "numeric",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "The name of the city (e.g., 'London', 'Tokyo', 'New York')."
+          }
+        },
+        "required": [
+          "city"
+        ]
+      },
+      "module": "smith.tools.WEATHER_FETCHER"
+    }
+  ]
+}

@@ -71,6 +71,8 @@ METADATA = {
     "description": "Fetch academic papers from arXiv by keyword search.",
     "function": "run_arxiv_search",
     "dangerous": False,
+    "domain": "data",
+    "output_type": "factual",
     "parameters": {
         "type": "object",
         "properties": {

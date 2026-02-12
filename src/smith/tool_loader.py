@@ -47,7 +47,7 @@ def load_tool_function(module_name: str, func_name: str) -> Callable:
     Load a specific function from a tool module.
 
     Args:
-        module_name: Name of the module (fuzzy matched)
+        module_name: Name of the module (fuzzy matched) or full path like 'smith.tools.MODULE'
         func_name: Name of the function to import
 
     Returns:
@@ -58,6 +58,10 @@ def load_tool_function(module_name: str, func_name: str) -> Callable:
         AttributeError: If function is missing.
         TypeError: If target is not callable.
     """
+    # Strip 'smith.tools.' prefix if present
+    if module_name.startswith("smith.tools."):
+        module_name = module_name.replace("smith.tools.", "")
+    
     canonical_name = resolve_module_name(module_name)
 
     if not canonical_name:

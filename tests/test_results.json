@@ -1,0 +1,100 @@
+{
+  "tests": [
+    {
+      "id": "test_1_authority",
+      "name": "Authority Violation Detection",
+      "query": "What's the current stock price of AAPL and calculate the percentage change from last month?",
+      "expected_tools": [
+        "finance_fetcher",
+        "numeric_computer"
+      ],
+      "should_violate": false
+    },
+    {
+      "id": "test_2_capability_gap",
+      "name": "Capability Gap Detection",
+      "query": "Process this image file and extract the text from it",
+      "expected_tools": [],
+      "should_error": true
+    },
+    {
+      "id": "test_3_llm_constraint",
+      "name": "LLM Constraint Enforcement",
+      "query": "Search AI news, summarize each, cluster them, analyze trends, write a report",
+      "expected_tools": [
+        "google_search",
+        "news_clusterer"
+      ],
+      "max_llm_calls": 3
+    },
+    {
+      "id": "test_4_clustering",
+      "name": "News Clustering",
+      "query": "Search for recent AI news and group them by topic",
+      "expected_tools": [
+        "google_search",
+        "news_clusterer"
+      ],
+      "should_violate": false
+    },
+    {
+      "id": "test_5_complex_workflow",
+      "name": "Complex Multi-Tool",
+      "query": "Get Seattle weather, search for weather pattern news, and explain any connection",
+      "expected_tools": [
+        "weather_fetcher",
+        "google_search",
+        "llm_caller"
+      ],
+      "should_violate": false
+    },
+    {
+      "id": "test_6_numeric_stress",
+      "name": "Numeric Computation",
+      "query": "Get TSLA stock price history and calculate trend direction and volatility statistics",
+      "expected_tools": [
+        "finance_fetcher",
+        "numeric_computer"
+      ],
+      "should_violate": false
+    }
+  ],
+  "execution_plan": [
+    {
+      "test_id": "test_1_authority",
+      "query": "What's the current stock price of AAPL and calculate the percentage change from last month?",
+      "start_time": 1770911726.7256362,
+      "status": "pending"
+    },
+    {
+      "test_id": "test_2_capability_gap",
+      "query": "Process this image file and extract the text from it",
+      "start_time": 1770911726.7266555,
+      "status": "pending"
+    },
+    {
+      "test_id": "test_3_llm_constraint",
+      "query": "Search AI news, summarize each, cluster them, analyze trends, write a report",
+      "start_time": 1770911726.7291772,
+      "status": "pending"
+    },
+    {
+      "test_id": "test_4_clustering",
+      "query": "Search for recent AI news and group them by topic",
+      "start_time": 1770911726.7301764,
+      "status": "pending"
+    },
+    {
+      "test_id": "test_5_complex_workflow",
+      "query": "Get Seattle weather, search for weather pattern news, and explain any connection",
+      "start_time": 1770911726.7301764,
+      "status": "pending"
+    },
+    {
+      "test_id": "test_6_numeric_stress",
+      "query": "Get TSLA stock price history and calculate trend direction and volatility statistics",
+      "start_time": 1770911726.7378883,
+      "status": "pending"
+    }
+  ]
+}

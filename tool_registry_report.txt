@@ -1,0 +1,61 @@
+[OK] Connected to MongoDB successfully
+
+[INFO] Total tools registered: 11
+
+[LIST] Registered tools:
+--------------------------------------------------------------------------------
+
+  [TOOL] arxiv_search
+     Module: ARXIV_FETCHER
+     Function: run_arxiv_search
+     Description: Fetch academic papers from arXiv by keyword search.
+
+  [TOOL] calculator
+     Module: CALCULATOR
+     Function: run_calculator_tool
+     Description: Evaluate mathematical expressions. Supports +, -, *, /, **, sqrt, sin, cos, log, and more.
+
+  [TOOL] finance_fetcher
+     Module: FINANCE
+     Function: run_finance_tool
+     Description: Get stock data. Use operation='price' for current value.
+
+  [TOOL] github_fetcher
+     Module: GITHUB_FETCHER
+     Function: run_github_tool
+     Description: Search GitHub repositories, get repo details, or fetch README content.
+
+  [TOOL] google_search
+     Module: GOOGLE_SEARCHER
+     Function: run_google_search
+     Description: Search Google for real-time information, news, or facts.
+
+  [TOOL] maps_directions
+     Module: MAPS_DIRECTIONS
+     Function: run_maps_tool
+     Description: Get directions between two locations with distance and estimated travel time.
+
+  [TOOL] news_fetcher
+     Module: NEWS_FETCHER
+     Function: run_news_tool
+     Description: Fetch latest news articles on any topic. Returns headlines, sources, and URLs.
+
+  [TOOL] tool_diagnostics
+     Module: TOOL_DIAGNOSTICS
+     Function: run_diagnostics
+     Description: Runs a health check on all installed tools. Detects broken imports, missing functions, or invalid metadata.
+
+  [TOOL] translator
+     Module: TRANSLATOR
+     Function: run_translator_tool
+     Description: Translate text between languages. Supports 30+ languages including auto-detection.
+
+  [TOOL] weather_fetcher
+     Module: WEATHER_FETCHER
+     Function: run_weather_tool
+     Description: Get the current weather forecast (temperature, condition, wind) for any city globally.
+
+  [TOOL] wikipedia_searcher
+     Module: WIKIPEDIA_SEARCHER
+     Function: run_wikipedia_tool
+     Description: Search Wikipedia and get article summaries. Great for facts, definitions, and background info.

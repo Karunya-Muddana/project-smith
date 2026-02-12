@@ -91,6 +91,8 @@ METADATA = {
     "description": "Search Google for real-time information, news, or facts.",
     "function": "run_google_search",
     "dangerous": False,
+    "domain": "data",
+    "output_type": "factual",
     "parameters": {
         "type": "object",
         "properties": {

@@ -94,6 +94,8 @@ METADATA = {
     "description": "Get stock data. Use operation='price' for current value.",
     "function": "run_finance_tool",
     "dangerous": False,
+    "domain": "data",
+    "output_type": "numeric",
     "parameters": {
         "type": "object",
         "properties": {
