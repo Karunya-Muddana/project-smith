@@ -48,7 +48,6 @@ class DBTools:
             self.db = None
 
     def _ensure_conn(self):
-        if self.client is None or self.db is None:  # FIXED HERE
             return {"status": "error", "error": "DB not connected"}
         return None
 

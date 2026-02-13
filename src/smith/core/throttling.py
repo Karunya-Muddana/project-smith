@@ -50,7 +50,6 @@ class TokenBucket:
         self.tokens_rpm = min(self.max_tokens_rpm, self.tokens_rpm + new_rpm)
         
         # Refill/Use Usage Tokens (TPM refill logic - simplified to just refill)
-        # Note: TPM is usually consumption based. We refill up to limit.
         new_tpm = elapsed * self.tpm_fill_rate
         self.tokens_tpm = min(self.max_tokens_tpm, self.tokens_tpm + new_tpm)
         

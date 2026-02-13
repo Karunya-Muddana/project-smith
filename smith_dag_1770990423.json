@@ -1,0 +1,39 @@
+{
+  "status": "success",
+  "nodes": [
+    {
+      "id": 0,
+      "thought": "To provide detailed information about Adolf Hitler, we need to search for reliable sources.",
+      "tool": "google_search",
+      "function": "run_google_search",
+      "inputs": {
+        "query": "Adolf Hitler biography",
+        "num_results": 5
+      },
+      "depends_on": [],
+      "retry": 2,
+      "on_fail": "halt",
+      "timeout": 45,
+      "_normalized_deps": []
+    },
+    {
+      "id": 1,
+      "thought": "We will use the search results to gather more specific information about Adolf Hitler's life and actions.",
+      "tool": "llm_caller",
+      "function": "run_llm_tool",
+      "inputs": {
+        "prompt": "Provide a detailed biography of Adolf Hitler based on the search results."
+      },
+      "depends_on": [
+        0
+      ],
+      "retry": 2,
+      "on_fail": "halt",
+      "timeout": 45,
+      "_normalized_deps": [
+        0
+      ]
+    }
+  ],
+  "final_output_node": 1
+}

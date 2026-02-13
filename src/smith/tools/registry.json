@@ -156,51 +156,6 @@
       "module": "smith.tools.NEWS_CLUSTERER"
     },
     {
-      "name": "numeric_computer",
-      "description": "Perform deterministic calculations: trends, percent changes, statistics. Use this instead of asking LLM to compute numbers.",
-      "function": "run_numeric_tool",
-      "dangerous": false,
-      "domain": "computation",
-      "output_type": "numeric",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "operation": {
-            "type": "string",
-            "enum": [
-              "trend",
-              "percent_change",
-              "statistics"
-            ],
-            "description": "Type of calculation"
-          },
-          "values": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            },
-            "description": "List of numeric values for trend or statistics"
-          },
-          "old_value": {
-            "type": "number",
-            "description": "Old value for percent_change"
-          },
-          "new_value": {
-            "type": "number",
-            "description": "New value for percent_change"
-          },
-          "window": {
-            "type": "integer",
-            "description": "Window size for moving average (optional)"
-          }
-        },
-        "required": [
-          "operation"
-        ]
-      },
-      "module": "smith.tools.NUMERIC_COMPUTER"
-    },
-    {
       "name": "tool_diagnostics",
       "description": "Runs a health check on all installed tools. Detects broken imports, missing functions, or invalid metadata.",
       "function": "run_diagnostics",

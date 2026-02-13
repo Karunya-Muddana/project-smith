@@ -32,12 +32,15 @@ err_console = Console(stderr=True, style="red")
 # ============================================================================
 
 SMITH_BANNER = """
-[bold cyan]███████[/bold cyan][bold blue]╗[/bold blue] [bold blue]███[/bold blue][bold magenta]╗[/bold magenta]   [bold magenta]███[/bold magenta][bold red]╗[/bold red][bold red]██[/bold red][bold yellow]╗[/bold yellow][bold yellow]████████[/bold yellow][bold green]╗[/bold green][bold green]██[/bold green][bold cyan]╗[/bold cyan]  [bold cyan]██[/bold cyan][bold blue]╗[/bold blue]
-[bold cyan]██[/bold cyan][bold blue]╔════╝[/bold blue] [bold blue]████[/bold blue][bold magenta]╗[/bold magenta] [bold magenta]████[/bold magenta][bold red]║[/bold red][bold red]██[/bold red][bold yellow]║[/bold yellow][bold yellow]╚══██╔══╝[/bold yellow][bold green]██[/bold green][bold cyan]║[/bold cyan]  [bold cyan]██[/bold cyan][bold blue]║[/bold blue]
-[bold cyan]███████[/bold cyan][bold blue]╗[/bold blue] [bold blue]██[/bold blue][bold magenta]╔[/bold magenta][bold magenta]████[/bold magenta][bold red]╔[/bold red][bold red]██[/bold red][bold yellow]║[/bold yellow][bold yellow]██[/bold yellow][bold green]║[/bold green]   [bold green]██[/bold green][bold cyan]║[/bold cyan]   [bold cyan]███████[/bold cyan][bold blue]║[/bold blue]
-[bold blue]╚════██[/bold blue][bold magenta]║[/bold magenta] [bold magenta]██[/bold magenta][bold red]║╚[/bold red][bold red]██[/bold red][bold yellow]╔╝[/bold yellow][bold yellow]██[/bold yellow][bold green]║[/bold green][bold green]██[/bold green][bold cyan]║[/bold cyan]   [bold cyan]██[/bold cyan][bold blue]║[/bold blue]   [bold blue]██[/bold blue][bold magenta]╔══[/bold magenta][bold magenta]██[/bold magenta][bold red]║[/bold red]
-[bold magenta]███████[/bold magenta][bold red]║[/bold red] [bold red]██[/bold red][bold yellow]║[/bold yellow] [bold yellow]╚═╝[/bold yellow] [bold green]██[/bold green][bold cyan]║[/bold cyan][bold cyan]██[/bold cyan][bold blue]║[/bold blue]   [bold blue]██[/bold blue][bold magenta]║[/bold magenta]   [bold magenta]██[/bold magenta][bold red]║[/bold red]  [bold red]██[/bold red][bold yellow]║[/bold yellow]
-[bold red]╚══════╝[/bold red] [bold yellow]╚═╝[/bold yellow]     [bold green]╚═╝[/bold green][bold cyan]╚═╝[/bold cyan]   [bold blue]╚═╝[/bold blue]   [bold magenta]╚═╝[/bold magenta]  [bold red]╚═╝[/bold red]
+[bold white]
+  ███████╗███╗   ███╗██╗████████╗██╗  ██╗
+  ██╔════╝████╗ ████║██║╚══██╔══╝██║  ██║
+  ███████╗██╔████╔██║██║   ██║   ███████║
+  ╚════██║██║╚██╔╝██║██║   ██║   ██╔══██║
+  ███████║██║ ╚═╝ ██║██║   ██║   ██║  ██║
+  ╚══════╝╚═╝     ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝
+[/bold white]
+[dim]Zero-Trust Agent Runtime[/dim]
 """
 
 # ============================================================================

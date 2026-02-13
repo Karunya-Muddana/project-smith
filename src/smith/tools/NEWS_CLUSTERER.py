@@ -5,7 +5,7 @@ Groups news articles or text items by semantic similarity.
 Provides cluster metrics and justifications.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 from collections import Counter
 import re
 
@@ -44,13 +44,44 @@ def calculate_similarity(keywords1: List[str], keywords2: List[str]) -> float:
     return intersection / union if union > 0 else 0.0
 
 
+def normalize_articles(articles: Union[List[Dict[str, str]], List[str]]) -> List[Dict[str, str]]:
+    """
+    Normalize articles to ensure they're in the expected format.
+    Handles both dict format and string format (URLs/titles).
+    """
+    normalized = []
+    
+    for article in articles:
+        if isinstance(article, dict):
+            # Already in dict format, ensure required keys exist
+            normalized.append({
+                'title': article.get('title', ''),
+                'content': article.get('content', ''),
+                'snippet': article.get('snippet', ''),
+                'url': article.get('url', '')
+            })
+        elif isinstance(article, str):
+            # Convert string to dict format
+            normalized.append({
+                'title': article,
+                'content': '',
+                'snippet': '',
+                'url': article
+            })
+        else:
+            # Skip invalid entries
+            continue
+    
+    return normalized
+
+
 def cluster_articles(articles: List[Dict[str, str]], similarity_threshold: float = 0.3) -> Dict[str, Any]:
     """
     Cluster articles by keyword similarity.
     
     Args:
-        articles: List of dicts with 'title' and 'content' or 'snippet'
-        similarity_threshold: Minimum similarity to group items
+        articles: List of dicts with 'title' and 'content'/'snippet', or list of strings
+        similarity_threshold: Minimum similarity to group items (0.0-1.0)
         
     Returns:
         Dict with clusters, metrics, and justifications
@@ -59,15 +90,28 @@ def cluster_articles(articles: List[Dict[str, str]], similarity_threshold: float
         return {"status": "error", "error": "No articles provided"}
     
     try:
+        # Normalize input
+        articles = normalize_articles(articles)
+        
+        if not articles:
+            return {"status": "error", "error": "No valid articles after normalization"}
+        
         # Extract keywords for each article
         article_keywords = []
         for article in articles:
-            text = article.get('title', '') + ' ' + article.get('content', '') + ' ' + article.get('snippet', '')
+            text = (article.get('title', '') or '') + ' ' + (article.get('content', '') or '') + ' ' + (article.get('snippet', '') or '')
+            if not text.strip():
+                continue
+                
             keywords = extract_keywords(text)
-            article_keywords.append({
-                'article': article,
-                'keywords': keywords
-            })
+            if keywords:  # Only include if we found keywords
+                article_keywords.append({
+                    'article': article,
+                    'keywords': keywords
+                })
+        
+        if not article_keywords:
+            return {"status": "error", "error": "Could not extract keywords from any articles"}
         
         # Simple agglomerative clustering
         clusters = []
@@ -106,7 +150,7 @@ def cluster_articles(articles: List[Dict[str, str]], similarity_threshold: float
         result_clusters = []
         for idx, cluster in enumerate(clusters):
             theme = ' + '.join(cluster['keywords'][:3]).title()
-            if not theme:
+            if not theme or theme.strip() == '':
                 theme = f"Cluster {idx + 1}"
             
             result_clusters.append({
@@ -132,7 +176,7 @@ def cluster_articles(articles: List[Dict[str, str]], similarity_threshold: float
         }
         
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": f"Clustering failed: {str(e)}"}
 
 
 # ===========================================================================
@@ -140,14 +184,14 @@ def cluster_articles(articles: List[Dict[str, str]], similarity_threshold: float
 # ===========================================================================
 
 def run_clustering_tool(
-    articles: List[Dict[str, str]],
+    articles: List[Union[Dict[str, str], str]],
     similarity_threshold: float = 0.3
 ):
     """
     Cluster news articles or text items.
     
     Args:
-        articles: List of dicts with 'title' and 'content'/'snippet'
+        articles: List of dicts with 'title'/'content'/'snippet' or list of strings
         similarity_threshold: 0.0-1.0, minimum similarity to group (default 0.3)
     """
     return cluster_articles(articles, similarity_threshold)
@@ -169,14 +213,22 @@ METADATA = {
             "articles": {
                 "type": "array",
                 "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "content": {"type": "string"},
-                        "snippet": {"type": "string"}
-                    }
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string"},
+                                "content": {"type": "string"},
+                                "snippet": {"type": "string"},
+                                "url": {"type": "string"}
+                            }
+                        },
+                        {
+                            "type": "string"
+                        }
+                    ]
                 },
-                "description": "List of articles to cluster"
+                "description": "List of articles to cluster (dicts or strings)"
             },
             "similarity_threshold": {
                 "type": "number",

@@ -60,7 +60,7 @@ Each node in "nodes" represents ONE tool execution.
 ──────────────────── COST CONSTRAINTS ────────────────────
 ⚠️ MINIMIZE PLAN SIZE - Each tool has a cost:
   - Data tools (google_search, finance_fetcher, weather_fetcher, arxiv_search): 1 point
-  - Computation tools (numeric_computer, news_clusterer): 2 points
+  - Computation tools (news_clusterer): 2 points
   - LLM reasoning (llm_caller): 5 points
   - System tools (tool_diagnostics): 1 point
 
@@ -70,7 +70,6 @@ PENALTY: Plans with >3 llm_caller nodes will be rejected.
 
 ──────────────────── TOOL DOMAIN AWARENESS ────────────────────
 ⚠️ NEVER ask llm_caller to produce:
-  - Numeric data (prices, statistics, trends) → Use numeric_computer
   - Real-time facts (current weather, stock prices) → Use data tools
   - Factual claims without sources → Use google_search or other data tools
   - Article clustering → Use news_clusterer
@@ -238,10 +237,7 @@ def _detect_capability_gaps(plan_obj: Dict[str, Any], available_tools: Dict[str,
             
             # Numeric computation detected
             if any(kw in thought or kw in prompt for kw in ["calculate", "compute", "trend", "percentage", "statistics"]):
-                if "numeric_computer" in available_tools:
-                    suggestions.append("Consider using 'numeric_computer' instead of LLM for calculations")
-                else:
-                    gaps.append("Numeric computation requested but numeric_computer not available")
+                gaps.append("Numeric computation requested but numeric_computer not available")
             
             # Clustering detected
             if any(kw in thought or kw in prompt for kw in ["cluster", "group", "categorize articles"]):

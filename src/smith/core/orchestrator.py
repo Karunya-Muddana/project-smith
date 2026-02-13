@@ -32,7 +32,6 @@ try:
     from smith import planner
     from smith import registry  # Static registry instead of MongoDB
     from smith import tool_loader
-    from smith.core.logging import get_smith_logger # REFACTORED
     from smith.core.validators import validate_tool_authority  # Authority validation
 except ImportError as e:
     # Fail fast if the package structure is invalid
@@ -42,7 +41,7 @@ except ImportError as e:
     sys.exit(1)
 
 # Initialize Structured Logger
-logger = get_smith_logger("smith.orchestrator") # REFACTORED
+logger = logging.getLogger("smith.orchestrator")
 
 TRACE_VERSION = "3.0"
 PLACEHOLDER_RE = re.compile(r"\{\{\s*STEPS\.(\d+)\.([^}]+)\}\}", re.IGNORECASE)
@@ -281,6 +280,13 @@ def smith_orchestrator(
 
     logger.info(f"Planner produced a valid DAG with {len(nodes)} node(s).")
     
+    # Emit plan created event for CLI/UI to capture
+    yield {
+        "type": "plan_created",
+        "plan": plan,
+        "run_id": run_id
+    }
+    
     # 3) Parallel Execution Setup -------------------------------------------
     trace: List[Optional[Dict[str, Any]]] = [None] * len(nodes)
     completed: Set[int] = set()
@@ -393,7 +399,6 @@ def smith_orchestrator(
                         "step_id": step_id,
                         "message": f"Security: Tool '{tool_name}' requires approval.",
                     }
-                    # Note: yield pauses here. If user rejects, we skip.
                     # Currently, CLI handles the yield and returns control. 
                     # If this was async, we'd need a wait.
                     # Assume positive for now or strict halt?
@@ -581,19 +586,26 @@ def smith_orchestrator(
 # RICH CLI & INTERACTIVE MODE                                                 #
 # ============================================================================ #
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.layout import Layout
-from rich.live import Live
-from rich.markdown import Markdown
-from rich.table import Table
-from rich.style import Style
-from rich.text import Text
-from rich.prompt import Prompt, Confirm
+if __name__ == "__main__":
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.layout import Layout
+        from rich.live import Live
+        from rich.markdown import Markdown
+        from rich.table import Table
+        from rich.style import Style
+        from rich.text import Text
+        from rich.prompt import Prompt, Confirm
+    except ImportError:
+        pass
 
-console = Console()
+    except ImportError:
+        pass
 
-SMITH_BANNER = """
+    console = Console()
+
+    SMITH_BANNER = """
    _____  __  __  _____  _______  _    _ 
   / ____||  \/  ||_   _||__   __|| |  | |
  | (___  | \  / |  | |     | |   | |__| |
@@ -602,11 +614,11 @@ SMITH_BANNER = """
  |_____/ |_|  |_||_____|   |_|   |_|  |_|
 """
 
-def print_banner():
-    """Prints the stylish ASCII banner."""
-    text = Text(SMITH_BANNER, style="bold cyan")
-    panel = Panel(
-        text,
+    def print_banner():
+        """Prints the stylish ASCII banner."""
+        text = Text(SMITH_BANNER, style="bold cyan")
+        panel = Panel(
+            text,
         title="[bold magenta]Orchestrator v3.0[/bold magenta]",
         subtitle="[italic white]Type /help for commands[/italic white]",
         border_style="blue",

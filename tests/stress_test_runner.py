@@ -4,21 +4,12 @@ Smith Stress Test Runner
 Automated test execution and data collection.
 """
 
-import subprocess
 import json
 import time
-import sys
 from pathlib import Path
 
 # Test queries
 TESTS = [
-    {
-        "id": "test_1_authority",
-        "name": "Authority Violation Detection",
-        "query": "What's the current stock price of AAPL and calculate the percentage change from last month?",
-        "expected_tools": ["finance_fetcher", "numeric_computer"],
-        "should_violate": False
-    },
     {
         "id": "test_2_capability_gap",
         "name": "Capability Gap Detection",
@@ -46,13 +37,6 @@ TESTS = [
         "query": "Get Seattle weather, search for weather pattern news, and explain any connection",
         "expected_tools": ["weather_fetcher", "google_search", "llm_caller"],
         "should_violate": False
-    },
-    {
-        "id": "test_6_numeric_stress",
-        "name": "Numeric Computation",
-        "query": "Get TSLA stock price history and calculate trend direction and volatility statistics",
-        "expected_tools": ["finance_fetcher", "numeric_computer"],
-        "should_violate": False
     }
 ]
 
@@ -66,7 +50,6 @@ def run_smith_query(query: str, test_id: str):
     
     start_time = time.time()
     
-    # Note: In reality, we'd need to interact with the REPL programmatically
     # For now, this is a template showing the structure
     
     result = {
@@ -76,13 +59,13 @@ def run_smith_query(query: str, test_id: str):
         "status": "pending"
     }
     
-    print(f"⚠️  Manual execution required:")
-    print(f"   1. Run: smith")
+    print("⚠️  Manual execution required:")
+    print("   1. Run: smith")
     print(f"   2. Enter: {query}")
-    print(f"   3. Wait for completion")
-    print(f"   4. Run: /inspect")
-    print(f"   5. Run: /dag")
-    print(f"   6. Check logs for violations\n")
+    print("   3. Wait for completion")
+    print("   4. Run: /inspect")
+    print("   5. Run: /dag")
+    print("   6. Check logs for violations\n")
     
     return result
 
