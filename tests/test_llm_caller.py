@@ -18,11 +18,11 @@ def test_llm_caller_basic_call():
     """Test that LLM caller can make a basic call and return a response."""
     # Use a simple prompt to minimize API costs
     result = call_llm("Say 'Hello' in one word.")
-    
+
     # Check response structure
     assert isinstance(result, dict)
     assert "status" in result
-    
+
     # If successful, should have 'response' key
     # If error (e.g., missing API key), should have 'error' key
     if result["status"] == "success":
@@ -41,7 +41,7 @@ def test_llm_caller_handles_errors():
     """Test that LLM caller handles errors gracefully."""
     # Call with empty prompt - should handle gracefully
     result = call_llm("")
-    
+
     assert isinstance(result, dict)
     assert "status" in result
     # Should either succeed (empty response) or error gracefully
@@ -51,10 +51,10 @@ def test_llm_caller_handles_errors():
 def test_run_llm_tool_interface():
     """Test the Smith tool interface for LLM calls."""
     result = run_llm_tool("Test", model="default")
-    
+
     assert isinstance(result, dict)
     assert "status" in result
-    
+
     # Accept both success and error (API key might be missing)
     if result["status"] == "success":
         assert "response" in result

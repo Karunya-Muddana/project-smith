@@ -19,8 +19,9 @@ try:
             print(f"\n[SUCCESS] FINAL ANSWER:\n{event.get('payload')}")
         elif e_type == "error":
             print(f"[ERROR] {event.get('message')}")
-            
+
 except Exception as e:
     print(f"CRASH: {e}")
     import traceback
+
     traceback.print_exc()

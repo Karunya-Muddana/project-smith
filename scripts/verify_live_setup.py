@@ -16,6 +16,7 @@ else:
 # 2. Check MongoDB
 try:
     from smith.tools.DB_TOOLS import DBTools
+
     db = DBTools()
     res = db.list_collections()
     if res.get("status") == "success":
@@ -28,6 +29,7 @@ except Exception as e:
 # 3. Check LLM Client
 try:
     from smith.tools import LLM_CALLER
+
     if LLM_CALLER.client:
         print("[OK] LLM Client initialized.")
     else:

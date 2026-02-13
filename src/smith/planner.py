@@ -184,86 +184,105 @@ def _validate_plan_constraints(plan_obj: Dict[str, Any]) -> Dict[str, Any]:
     Validate plan against constraints:
     - LLM usage limit (max 3 calls)
     - Minimum tool usage
-    
+
     Returns:
         {"valid": bool, "violations": List[str], "warnings": List[str]}
     """
     violations = []
     warnings = []
-    
+
     nodes = plan_obj.get("nodes", [])
-    
+
     # Count LLM calls
     llm_calls = sum(1 for node in nodes if node.get("tool") == "llm_caller")
-    
+
     if llm_calls > 3:
         violations.append(f"Excessive LLM usage: {llm_calls} calls (limit: 3)")
-    
+
     if llm_calls > 2:
-        warnings.append(f"High LLM usage: {llm_calls} calls - consider using computation tools")
-    
+        warnings.append(
+            f"High LLM usage: {llm_calls} calls - consider using computation tools"
+        )
+
     # Check single-step plans that use LLM for data retrieval
     if len(nodes) == 1 and llm_calls == 1:
         node = nodes[0]
         thought = node.get("thought", "").lower()
-        if any(keyword in thought for keyword in ["price", "weather", "stock", "current", "fetch", "get data"]):
-            warnings.append("Single LLM step for data retrieval - consider using data tools")
-    
+        if any(
+            keyword in thought
+            for keyword in ["price", "weather", "stock", "current", "fetch", "get data"]
+        ):
+            warnings.append(
+                "Single LLM step for data retrieval - consider using data tools"
+            )
+
     return {
         "valid": len(violations) == 0,
         "violations": violations,
-        "warnings": warnings
+        "warnings": warnings,
     }
 
 
-def _detect_capability_gaps(plan_obj: Dict[str, Any], available_tools: Dict[str, Any]) -> Dict[str, Any]:
+def _detect_capability_gaps(
+    plan_obj: Dict[str, Any], available_tools: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Detect if plan tries to do things beyond available tool capabilities.
-    
+
     Returns:
         {"has_gaps": bool, "gaps": List[str], "suggestions": List[str]}
     """
     gaps = []
     suggestions = []
-    
+
     nodes = plan_obj.get("nodes", [])
-    
+
     # Check if LLM is being asked to compute numbers
     for node in nodes:
         if node.get("tool") == "llm_caller":
             thought = node.get("thought", "").lower()
             prompt = node.get("inputs", {}).get("prompt", "").lower()
-            
+
             # Numeric computation detected
-            if any(kw in thought or kw in prompt for kw in ["calculate", "compute", "trend", "percentage", "statistics"]):
-                gaps.append("Numeric computation requested but numeric_computer not available")
-            
+            if any(
+                kw in thought or kw in prompt
+                for kw in ["calculate", "compute", "trend", "percentage", "statistics"]
+            ):
+                gaps.append(
+                    "Numeric computation requested but numeric_computer not available"
+                )
+
             # Clustering detected
-            if any(kw in thought or kw in prompt for kw in ["cluster", "group", "categorize articles"]):
+            if any(
+                kw in thought or kw in prompt
+                for kw in ["cluster", "group", "categorize articles"]
+            ):
                 if "news_clusterer" in available_tools:
-                    suggestions.append("Consider using 'news_clusterer' for article clustering")
+                    suggestions.append(
+                        "Consider using 'news_clusterer' for article clustering"
+                    )
                 else:
-                    gaps.append("Article clustering requested but news_clusterer not available")
-    
+                    gaps.append(
+                        "Article clustering requested but news_clusterer not available"
+                    )
+
     # Check for impossible requests
     impossible_keywords = {
         "image": "image processing",
         "database": "database access",
         "email": "email sending",
         "file": "file system access",
-        "video": "video processing"
+        "video": "video processing",
     }
-    
+
     user_request_text = str(plan_obj).lower()
     for keyword, capability in impossible_keywords.items():
-        if keyword in user_request_text and keyword not in [t.lower() for t in available_tools.keys()]:
+        if keyword in user_request_text and keyword not in [
+            t.lower() for t in available_tools.keys()
+        ]:
             gaps.append(f"No tool available for {capability}")
-    
-    return {
-        "has_gaps": len(gaps) > 0,
-        "gaps": gaps,
-        "suggestions": suggestions
-    }
+
+    return {"has_gaps": len(gaps) > 0, "gaps": gaps, "suggestions": suggestions}
 
 
 # ============================================================
@@ -448,9 +467,9 @@ def _call_llm_for_syntax_fix(broken_json: str, parse_error: str) -> Dict[str, An
 def plan_task(user_msg: str, available_tools: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     The Main Planning Function.
-    
+
     Think of this as the "Compiler". It takes your fuzzy English and turns it into precise JSON instructions.
-    
+
     How it works:
       1. Looks at all the tools we have (the Registry).
       2. Asks the LLM: "Hey, how do I solve this user request with these tools?"
@@ -548,26 +567,28 @@ def plan_task(user_msg: str, available_tools: List[Dict[str, Any]]) -> Dict[str,
         validated_plan = validation["plan"]
         if "status" not in validated_plan:
             validated_plan["status"] = "success"
-        
+
         # Post-validation: Check constraints and capability gaps
         constraint_check = _validate_plan_constraints(validated_plan)
         if not constraint_check["valid"]:
             # Hard violations - reject plan
             last_error = "; ".join(constraint_check["violations"])
-            logger.warning("Plan violates constraints on attempt %d: %s", attempt + 1, last_error)
+            logger.warning(
+                "Plan violates constraints on attempt %d: %s", attempt + 1, last_error
+            )
             continue
-        
+
         # Soft warnings - log but don't reject
         if constraint_check["warnings"]:
             for warning in constraint_check["warnings"]:
                 logger.warning("Plan warning: %s", warning)
-        
+
         # Capability gap detection
         capability_check = _detect_capability_gaps(validated_plan, registry)
         if capability_check["has_gaps"]:
             for gap in capability_check["gaps"]:
                 logger.warning("Capability gap detected: %s", gap)
-        
+
         if capability_check["suggestions"]:
             for suggestion in capability_check["suggestions"]:
                 logger.info("Optimization suggestion: %s", suggestion)

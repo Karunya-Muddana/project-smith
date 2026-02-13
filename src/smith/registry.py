@@ -17,20 +17,20 @@ def get_tools_registry() -> List[Dict[str, Any]]:
     Returns list of tool metadata dictionaries.
     """
     global _REGISTRY_CACHE
-    
+
     if _REGISTRY_CACHE is not None:
         return _REGISTRY_CACHE
-    
+
     # Find registry.json relative to this file
     current_dir = Path(__file__).parent
     registry_path = current_dir / "tools" / "registry.json"
-    
+
     if not registry_path.exists():
         raise FileNotFoundError(f"Tool registry not found at {registry_path}")
-    
-    with open(registry_path, 'r', encoding='utf-8') as f:
+
+    with open(registry_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    
+
     _REGISTRY_CACHE = data.get("tools", [])
     return _REGISTRY_CACHE
 

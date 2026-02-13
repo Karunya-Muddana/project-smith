@@ -85,15 +85,11 @@ def main():
         sys.exit(1)
 
     # Build registry structure
-    registry = {
-        "version": "1.0",
-        "auto_generated": True,
-        "tools": tools
-    }
+    registry = {"version": "1.0", "auto_generated": True, "tools": tools}
 
     # Write to JSON file
     try:
-        with open(REGISTRY_FILE, 'w', encoding='utf-8') as f:
+        with open(REGISTRY_FILE, "w", encoding="utf-8") as f:
             json.dump(registry, f, indent=2, ensure_ascii=False)
         logger.info(f"✓ Successfully generated {REGISTRY_FILE}")
         logger.info(f"✓ Registered {len(tools)} tools")
@@ -104,4 +100,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

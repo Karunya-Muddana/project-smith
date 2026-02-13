@@ -21,7 +21,7 @@ try:
     gen = smith_orchestrator(QUERY)
     for event in gen:
         e_type = event.get("type")
-        
+
         if e_type == "status":
             print(f"[STATUS] {event.get('message')}")
         elif e_type == "step_start":
@@ -48,4 +48,5 @@ try:
 except Exception as e:
     print(f"CRASH: {e}")
     import traceback
+
     traceback.print_exc()

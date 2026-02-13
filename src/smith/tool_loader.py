@@ -61,7 +61,7 @@ def load_tool_function(module_name: str, func_name: str) -> Callable:
     # Strip 'smith.tools.' prefix if present
     if module_name.startswith("smith.tools."):
         module_name = module_name.replace("smith.tools.", "")
-    
+
     canonical_name = resolve_module_name(module_name)
 
     if not canonical_name:

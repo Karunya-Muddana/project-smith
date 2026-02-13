@@ -1,6 +1,7 @@
 """
 Utility functions for Smith
 """
+
 import threading
 import traceback
 from typing import Any, Callable, Dict

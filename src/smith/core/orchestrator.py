@@ -94,6 +94,7 @@ def execute_with_timeout(
 # RATE LIMITER                                                                #
 # ============================================================================ #
 
+
 class RateLimiter:
     """
     Simple token-bucket-style rate limiter (1 request per interval).
@@ -101,7 +102,7 @@ class RateLimiter:
 
     # Default delays in seconds
     DEFAULT_LIMITS = {
-        "llm_caller": 1.0,     # Prevent rapid-fire LLM calls
+        "llm_caller": 1.0,  # Prevent rapid-fire LLM calls
         "google_search": 0.5,
         "news_fetcher": 0.5,
         "weather_fetcher": 0.2,
@@ -120,7 +121,7 @@ class RateLimiter:
             now = time.time()
             last = self._last_call.get(tool_name, 0.0)
             elapsed = now - last
-            
+
             if elapsed < delay:
                 sleep_time = delay - elapsed
                 time.sleep(sleep_time)
@@ -225,7 +226,7 @@ def smith_orchestrator(
 ) -> Generator[Dict[str, Any], None, None]:
     """
     The Main Event Loop.
-    
+
     This generator yields events so the UI (or CLI) can show you exactly what's happening
     in real-time. No more staring at a blank screen wondering if it hung!
     """
@@ -279,20 +280,16 @@ def smith_orchestrator(
         return
 
     logger.info(f"Planner produced a valid DAG with {len(nodes)} node(s).")
-    
+
     # Emit plan created event for CLI/UI to capture
-    yield {
-        "type": "plan_created",
-        "plan": plan,
-        "run_id": run_id
-    }
-    
+    yield {"type": "plan_created", "plan": plan, "run_id": run_id}
+
     # 3) Parallel Execution Setup -------------------------------------------
     trace: List[Optional[Dict[str, Any]]] = [None] * len(nodes)
     completed: Set[int] = set()
     submitted: Set[int] = set()
     futures: Dict[concurrent.futures.Future, int] = {}
-    
+
     # Rate limiter logic (simple local instance)
     limiter = RateLimiter()
 
@@ -302,28 +299,34 @@ def smith_orchestrator(
         if "depends_on" not in node or node["depends_on"] is None:
             node["depends_on"] = [idx - 1] if idx > 0 else []
         elif not isinstance(node["depends_on"], list):
-             node["depends_on"] = []
+            node["depends_on"] = []
 
         # Validate dependencies exist
         for d in node["depends_on"]:
             if not isinstance(d, int) or d < 0 or d >= len(nodes):
-                yield {"type": "error", "message": f"Step {idx} depends on invalid index {d}", "run_id": run_id}
+                yield {
+                    "type": "error",
+                    "message": f"Step {idx} depends on invalid index {d}",
+                    "run_id": run_id,
+                }
                 return
 
     # 4) Main Parallel Loop ------------------------------------------------
-        # 4) Main Parallel Loop ------------------------------------------------
-    with concurrent.futures.ThreadPoolExecutor(max_workers=config.max_workers) as executor:
+    # 4) Main Parallel Loop ------------------------------------------------
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=config.max_workers
+    ) as executor:
         # 1. Map Node IDs to List Indices
         id_to_idx = {}
         for idx, node in enumerate(nodes):
             nid = node.get("id")
             if nid is not None:
                 id_to_idx[nid] = idx
-        
+
         # 2. Validate and Normalize Dependencies
         for idx, node in enumerate(nodes):
             original_deps = node.get("depends_on", [])
-            
+
             # If no dependencies, auto-chain (fallback)
             if original_deps is None:
                 node["depends_on"] = [idx - 1] if idx > 0 else []
@@ -334,27 +337,31 @@ def smith_orchestrator(
                 # If d is an ID, map it to index
                 if d in id_to_idx:
                     mapped_idx = id_to_idx[d]
-                    if mapped_idx < idx: # Ensure DAG (dependency must come before)
+                    if mapped_idx < idx:  # Ensure DAG (dependency must come before)
                         normalized_deps.append(mapped_idx)
                     else:
-                        logger.warning(f"Ignored cycle/forward dependency: Node {node.get('id')} depends on {d} (Index {mapped_idx})")
+                        logger.warning(
+                            f"Ignored cycle/forward dependency: Node {node.get('id')} depends on {d} (Index {mapped_idx})"
+                        )
                 elif isinstance(d, int) and 0 <= d < idx:
-                     # Fallback: Assume it's already an index if it's valid
-                     normalized_deps.append(d)
+                    # Fallback: Assume it's already an index if it's valid
+                    normalized_deps.append(d)
                 else:
-                    logger.warning(f"Ignored invalid dependency: Node {node.get('id')} depends on {d}")
-            
+                    logger.warning(
+                        f"Ignored invalid dependency: Node {node.get('id')} depends on {d}"
+                    )
+
             node["_normalized_deps"] = normalized_deps
 
         while len(completed) < len(nodes):
-            
+
             # --- A. Submit Available Nodes ---
             # We iterate through all nodes to find those whose dependencies are met
             # and haven't been submitted yet.
             for idx, node in enumerate(nodes):
                 if idx in submitted:
                     continue
-                
+
                 # Use normalized dependencies (indices) for execution logic
                 deps = node.get("_normalized_deps", [])
                 if not all(d in completed for d in deps):
@@ -362,28 +369,37 @@ def smith_orchestrator(
 
                 # Check if any upstream dependency failed
                 upstream_error = any(
-                    (trace[d] and trace[d].get("status") != "success") 
-                    for d in deps
+                    (trace[d] and trace[d].get("status") != "success") for d in deps
                 )
-                
+
                 tool_name = node.get("tool")
                 fn_name = node.get("function")
                 step_id = f"{run_id}-step-{idx}"
-                
+
                 # Use metadata from registry
                 meta = tool_registry.get(tool_name)
                 if not meta:
                     logger.error(f"Tool {tool_name} removed from registry during run.")
                     # Mark as failed in trace
-                    trace[idx] = {"status": "error", "error": "Tool missing", "step_index": idx}
+                    trace[idx] = {
+                        "status": "error",
+                        "error": "Tool missing",
+                        "step_index": idx,
+                    }
                     completed.add(idx)
                     submitted.add(idx)
                     continue
 
                 if upstream_error:
                     # Skip execution
-                    logger.warning(f"Skipping Step {idx} ({tool_name}) due to upstream failure.")
-                    trace[idx] = {"status": "skipped", "error": "Upstream dependency failed", "step_index": idx}
+                    logger.warning(
+                        f"Skipping Step {idx} ({tool_name}) due to upstream failure."
+                    )
+                    trace[idx] = {
+                        "status": "skipped",
+                        "error": "Upstream dependency failed",
+                        "step_index": idx,
+                    }
                     completed.add(idx)
                     submitted.add(idx)
                     continue
@@ -399,13 +415,13 @@ def smith_orchestrator(
                         "step_id": step_id,
                         "message": f"Security: Tool '{tool_name}' requires approval.",
                     }
-                    # Currently, CLI handles the yield and returns control. 
+                    # Currently, CLI handles the yield and returns control.
                     # If this was async, we'd need a wait.
                     # Assume positive for now or strict halt?
-                    # In this synchronous generator, the UI must have 'authorized' logic implicitly 
+                    # In this synchronous generator, the UI must have 'authorized' logic implicitly
                     # or restart the generator.
                     # For CLI, we prompt. If CLI continues, it means "Authorized".
-                    # Real systems might use a callback or event. 
+                    # Real systems might use a callback or event.
 
                 yield {
                     "type": "step_start",
@@ -421,7 +437,7 @@ def smith_orchestrator(
                 # Prepare Inputs
                 raw_args = node.get("inputs") or node.get("args") or {}
                 safe_args = dict(raw_args)
-                
+
                 # Resolving placeholders must be done HERE (main thread) because `trace` is consistent here
                 if tool_name == "llm_caller":
                     p = safe_args.get("prompt", "")
@@ -440,7 +456,11 @@ def smith_orchestrator(
 
                 # Prepare Task Logic
                 def _run_node_logic(
-                    _fn: Callable, _args: Dict, _meta: Dict, _timeout: float, _retries: int
+                    _fn: Callable,
+                    _args: Dict,
+                    _meta: Dict,
+                    _timeout: float,
+                    _retries: int,
                 ) -> Dict[str, Any]:
                     _out = {"status": "error", "error": "Not run"}
                     for attempt in range(_retries + 1):
@@ -466,7 +486,9 @@ def smith_orchestrator(
                 n_timeout = float(node.get("timeout", config.default_timeout))
 
                 # Submit to ThreadPool
-                fut = executor.submit(_run_node_logic, fn_obj, safe_args, meta, n_timeout, n_retry)
+                fut = executor.submit(
+                    _run_node_logic, fn_obj, safe_args, meta, n_timeout, n_retry
+                )
                 futures[fut] = idx
                 submitted.add(idx)
 
@@ -479,30 +501,34 @@ def smith_orchestrator(
                     yield {"type": "error", "message": msg, "run_id": run_id}
                     return
                 else:
-                    break # All done
+                    break  # All done
 
             # Wait for at least one future
             done, _ = concurrent.futures.wait(
-                futures.keys(), 
-                return_when=concurrent.futures.FIRST_COMPLETED
+                futures.keys(), return_when=concurrent.futures.FIRST_COMPLETED
             )
 
             for fut in done:
                 f_idx = futures.pop(fut)
                 f_node = nodes[f_idx]
                 f_tool = f_node.get("tool")
-                
+
                 try:
                     result_payload = fut.result()
                 except Exception as exc:
                     logger.exception(f"Optimizer worker crash for step {f_idx}")
-                    result_payload = {"status": "error", "error": f"Worker Exception: {exc}"}
+                    result_payload = {
+                        "status": "error",
+                        "error": f"Worker Exception: {exc}",
+                    }
 
                 # Validate tool authority
-                validation_result = validate_tool_authority(meta, safe_args, result_payload)
+                validation_result = validate_tool_authority(
+                    meta, safe_args, result_payload
+                )
                 quality = validation_result.get("quality", "unknown")
                 violations = validation_result.get("violations", [])
-                
+
                 # Log violations
                 if violations:
                     for violation in violations:
@@ -521,13 +547,13 @@ def smith_orchestrator(
                     "quality": quality,  # Authority quality score
                     "violations": violations if violations else None,
                     "result": result_payload,
-                    "duration": 0.0, # Placeholder
+                    "duration": 0.0,  # Placeholder
                 }
                 trace[f_idx] = trace_entry
                 completed.add(f_idx)
 
                 # Emit Event
-                is_success = (result_payload.get("status") == "success")
+                is_success = result_payload.get("status") == "success"
                 yield {
                     "type": "step_complete",
                     "step_index": f_idx,  # Add step index for CLI display
@@ -537,9 +563,8 @@ def smith_orchestrator(
                     "payload": result_payload,
                     "run_id": run_id,
                     "step_id": f"{run_id}-step-{f_idx}",
-                    "duration": 0.0
+                    "duration": 0.0,
                 }
-
 
     # 4) Final synthesis from trace ----------------------------------------
     yield {"type": "status", "message": "Drafting final answer...", "run_id": run_id}
@@ -617,7 +642,7 @@ if __name__ == "__main__":
             title="[bold magenta]Orchestrator v3.0[/bold magenta]",
             subtitle="[italic white]Type /help for commands[/italic white]",
             border_style="blue",
-            expand=False
+            expand=False,
         )
         console.print(panel)
 
@@ -626,13 +651,13 @@ def command_help():
     table = Table(title="Available Commands", border_style="blue")
     table.add_column("Command", style="cyan", no_wrap=True)
     table.add_column("Description", style="white")
-    
+
     table.add_row("/help", "Show this help message")
     table.add_row("/diff", "Show details of the last execution trace")
     table.add_row("/export", "Export the last conversation to markdown")
     table.add_row("/clear", "Clear the screen")
     table.add_row("/quit", "Exit the orchestrator")
-    
+
     console.print(table)
 
 
@@ -649,17 +674,17 @@ def command_diff(last_trace):
 
     for step in last_trace:
         status_style = "green" if step.get("status") == "success" else "red"
-        
+
         # Format result for display
         res = step.get("result", {})
         if isinstance(res, dict):
-             # Try to show a concise summary
+            # Try to show a concise summary
             if "error" in res:
                 content = f"[red]{res['error']}[/red]"
             elif "result" in res:
                 content = str(res["result"])[:100] + "..."
             else:
-                 content = str(res)[:100] + "..."
+                content = str(res)[:100] + "..."
         else:
             content = str(res)[:100] + "..."
 
@@ -667,9 +692,9 @@ def command_diff(last_trace):
             str(step.get("step_index")),
             step.get("tool"),
             f"[{status_style}]{step.get('status')}[/{status_style}]",
-            content
+            content,
         )
-    
+
     console.print(table)
 
 
@@ -677,7 +702,7 @@ def command_export(history):
     if not history:
         console.print("[yellow]Nothing to export.[/yellow]")
         return
-    
+
     filename = f"smith_export_{int(time.time())}.md"
     try:
         with open(filename, "w", encoding="utf-8") as f:
@@ -686,7 +711,7 @@ def command_export(history):
                 f.write(f"**User**: {item['user']}\n\n")
                 f.write(f"**Smith**: {item['smith']}\n\n")
                 f.write("---\n\n")
-        
+
         console.print(f"[green]Exported to {filename}[/green]")
     except Exception as e:
         console.print(f"[red]Export failed: {e}[/red]")
@@ -700,15 +725,17 @@ def main():
 
     history = []
     last_trace = []
-    
+
     while True:
         try:
             # Styled Input
-            user_input = Prompt.ask("\n[bold green]Smith[/bold green] [bold white]>[/bold white]").strip()
-            
+            user_input = Prompt.ask(
+                "\n[bold green]Smith[/bold green] [bold white]>[/bold white]"
+            ).strip()
+
             if not user_input:
                 continue
-                
+
             # Slash Commands
             if user_input.startswith("/"):
                 cmd = user_input.lower()
@@ -727,79 +754,115 @@ def main():
                 else:
                     console.print(f"[red]Unknown command: {cmd}[/red]")
                 continue
-            
+
             # Processing
-            console.print(Panel("[dim]Processing request...[/dim]", style="blue", expand=False))
-            
+            console.print(
+                Panel("[dim]Processing request...[/dim]", style="blue", expand=False)
+            )
+
             current_trace = []
             final_response = ""
-            
+
             # Live Status Update
             with Live(refresh_per_second=4) as live:
                 status_table = Table.grid()
                 status_table.add_column()
-                
-                live.update(Panel(status_table, title="[yellow]Thinking...[/yellow]", border_style="yellow"))
+
+                live.update(
+                    Panel(
+                        status_table,
+                        title="[yellow]Thinking...[/yellow]",
+                        border_style="yellow",
+                    )
+                )
 
                 for event in smith_orchestrator(user_input):
                     event_type = event.get("type")
-                    
+
                     if event_type == "status":
-                        msg = event.get('message')
+                        msg = event.get("message")
                         status_table.add_row(f"[dim]{msg}[/dim]")
-                        live.update(Panel(status_table, title="[yellow]Working...[/yellow]", border_style="yellow"))
-                        
+                        live.update(
+                            Panel(
+                                status_table,
+                                title="[yellow]Working...[/yellow]",
+                                border_style="yellow",
+                            )
+                        )
+
                     elif event_type == "step_start":
                         tool = event.get("tool")
                         idx = event.get("step_index", 0)
-                        status_table.add_row(f"[blue]Step {idx}:[/blue] Running [cyan]{tool}[/cyan]...")
-                        live.update(Panel(status_table, title=f"[blue]Executing Step {idx}[/blue]", border_style="blue"))
-                        
+                        status_table.add_row(
+                            f"[blue]Step {idx}:[/blue] Running [cyan]{tool}[/cyan]..."
+                        )
+                        live.update(
+                            Panel(
+                                status_table,
+                                title=f"[blue]Executing Step {idx}[/blue]",
+                                border_style="blue",
+                            )
+                        )
+
                     elif event_type == "step_complete":
                         tool = event.get("tool")
                         status = event.get("status")
-                        idx = int(event.get("step_id", "0").split("-")[-1]) # hacky extraction
-                        
+                        idx = int(
+                            event.get("step_id", "0").split("-")[-1]
+                        )  # hacky extraction
+
                         sym = "✓" if status == "success" else "✗"
                         color = "green" if status == "success" else "red"
                         status_table.add_row(f"[{color}]{sym} {tool}[/{color}]")
-                        
+
                         # Record for diff
-                        current_trace.append({
-                            "step_index": idx,
-                            "tool": tool,
-                            "status": status,
-                            "result": event.get("payload")
-                        })
-                        
+                        current_trace.append(
+                            {
+                                "step_index": idx,
+                                "tool": tool,
+                                "status": status,
+                                "result": event.get("payload"),
+                            }
+                        )
+
                     elif event_type == "final_answer":
                         payload = event.get("payload", {})
                         if payload.get("status") == "success":
                             final_response = payload.get("response", "")
                         else:
                             final_response = f"Error: {payload.get('error')}"
-                            
+
                     elif event_type == "error":
-                        console.print(f"[bold red]Error: {event.get('message')}[/bold red]")
-                        
+                        console.print(
+                            f"[bold red]Error: {event.get('message')}[/bold red]"
+                        )
+
                     elif event_type == "approval_required":
-                         # Break out of Live to ask for input
-                         live.stop()
-                         tool = event.get("tool")
-                         if Confirm.ask(f"[bold red]Security Alert![/bold red] Allow tool [cyan]{tool}[/cyan]?"):
-                             console.print("[green]Authorized.[/green]")
-                         else:
-                             console.print("[red]Denied.[/red]")
-                             break
-                         live.start()
+                        # Break out of Live to ask for input
+                        live.stop()
+                        tool = event.get("tool")
+                        if Confirm.ask(
+                            f"[bold red]Security Alert![/bold red] Allow tool [cyan]{tool}[/cyan]?"
+                        ):
+                            console.print("[green]Authorized.[/green]")
+                        else:
+                            console.print("[red]Denied.[/red]")
+                            break
+                        live.start()
 
             # Final Output
             if final_response:
-                console.print(Panel(Markdown(final_response), title="[bold green]Smith's Answer[/bold green]", border_style="green"))
+                console.print(
+                    Panel(
+                        Markdown(final_response),
+                        title="[bold green]Smith's Answer[/bold green]",
+                        border_style="green",
+                    )
+                )
                 # Save to history
                 history.append({"user": user_input, "smith": final_response})
                 last_trace = current_trace
-            
+
         except KeyboardInterrupt:
             console.print("\n[yellow]Interrupted.[/yellow]")
         except EOFError:

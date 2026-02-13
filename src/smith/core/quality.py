@@ -11,7 +11,7 @@ from typing import Dict, Any, List
 def grade_execution_quality(trace: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Grade overall execution quality based on trace.
-    
+
     Returns:
         {
             "overall_quality": "excellent" | "good" | "degraded" | "poor",
@@ -25,25 +25,25 @@ def grade_execution_quality(trace: List[Dict[str, Any]]) -> Dict[str, Any]:
             "overall_quality": "unknown",
             "score": 0,
             "issues": ["Empty trace"],
-            "metrics": {}
+            "metrics": {},
         }
-    
+
     total_steps = len(trace)
     successful = sum(1 for t in trace if t.get("status") == "success")
     errors = sum(1 for t in trace if t.get("status") == "error")
     violations = sum(1 for t in trace if t.get("violations"))
     degraded = sum(1 for t in trace if t.get("quality") == "degraded")
-    
+
     # Calculate base score
     success_rate = (successful / total_steps) * 100 if total_steps > 0 else 0
-    
+
     # Penalties
     violation_penalty = violations * 15  # Heavy penalty for authority violations
     degraded_penalty = degraded * 10
     error_penalty = errors * 20
-    
+
     score = max(0, success_rate - violation_penalty - degraded_penalty - error_penalty)
-    
+
     # Issues list
     issues = []
     if violations > 0:
@@ -52,7 +52,7 @@ def grade_execution_quality(trace: List[Dict[str, Any]]) -> Dict[str, Any]:
         issues.append(f"{degraded} degraded execution(s)")
     if errors > 0:
         issues.append(f"{errors} error(s)")
-    
+
     # Overall grade
     if score >= 90 and not violations:
         quality = "excellent"
@@ -62,7 +62,7 @@ def grade_execution_quality(trace: List[Dict[str, Any]]) -> Dict[str, Any]:
         quality = "degraded"
     else:
         quality = "poor"
-    
+
     return {
         "overall_quality": quality,
         "score": round(score, 1),
@@ -73,8 +73,8 @@ def grade_execution_quality(trace: List[Dict[str, Any]]) -> Dict[str, Any]:
             "errors": errors,
             "violations": violations,
             "degraded": degraded,
-            "success_rate": round(success_rate, 1)
-        }
+            "success_rate": round(success_rate, 1),
+        },
     }
 
 
@@ -83,7 +83,7 @@ def generate_quality_warning(trace_entry: Dict[str, Any]) -> str:
     quality = trace_entry.get("quality", "unknown")
     violations = trace_entry.get("violations", [])
     tool = trace_entry.get("tool", "unknown")
-    
+
     if quality == "violated":
         return f"⚠️  {tool}: Multiple authority violations - {', '.join(violations)}"
     elif quality == "degraded":

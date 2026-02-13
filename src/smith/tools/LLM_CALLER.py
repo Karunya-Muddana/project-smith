@@ -28,7 +28,7 @@ VALID_MODELS = [
     "llama-3.3-70b-versatile",
     "llama3-70b-8192",
     "mixtral-8x7b-32768",
-    "llama3-8b-8192"
+    "llama3-8b-8192",
 ]
 
 PRIMARY_MODEL = VALID_MODELS[0]
@@ -38,7 +38,7 @@ init_error = None
 
 try:
     from groq import Groq
-    
+
     if API_KEY:
         client = Groq(api_key=API_KEY)
     else:
@@ -56,9 +56,9 @@ except Exception as e:
 def extract_text(response) -> str:
     """Extract text from Groq response."""
     try:
-        if hasattr(response, 'choices') and response.choices:
+        if hasattr(response, "choices") and response.choices:
             choice = response.choices[0]
-            if hasattr(choice, 'message') and hasattr(choice.message, 'content'):
+            if hasattr(choice, "message") and hasattr(choice.message, "content"):
                 return choice.message.content
         return "[EMPTY RESPONSE]"
     except Exception as e:
@@ -69,34 +69,32 @@ def safe_generate(prompt: str, model: str, max_retries: int = 3, base_delay: int
     """Call Groq API with retry logic."""
     if not client:
         raise RuntimeError(f"Client not initialized: {init_error}")
-    
+
     current_model = model
-    
+
     for attempt in range(max_retries + 1):
         try:
             response = client.chat.completions.create(
                 model=current_model,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
+                messages=[{"role": "user", "content": prompt}],
                 temperature=0.7,
                 max_tokens=8192,
-                top_p=0.95
+                top_p=0.95,
             )
             return response
-            
+
         except Exception as e:
             msg = str(e).lower()
-            
+
             # Handle rate limiting
             if "429" in msg or "rate_limit" in msg or "quota" in msg:
-                delay = base_delay * (2 ** attempt)
+                delay = base_delay * (2**attempt)
                 logger.warning(
                     f"Rate limit hit ({current_model}). Retrying in {delay}s..."
                 )
                 time.sleep(delay)
                 continue
-            
+
             # Handle invalid model - try fallback
             if "404" in msg or "not found" in msg or "invalid" in msg:
                 if current_model in VALID_MODELS:
@@ -111,16 +109,16 @@ def safe_generate(prompt: str, model: str, max_retries: int = 3, base_delay: int
                             continue
                     except ValueError:
                         pass
-            
+
             # Re-raise on final attempt or non-retryable errors
             if attempt == max_retries:
                 raise e
-            
+
             # Generic retry with backoff
-            delay = base_delay * (2 ** attempt)
+            delay = base_delay * (2**attempt)
             logger.warning(f"Error: {e}. Retrying in {delay}s...")
             time.sleep(delay)
-    
+
     raise RuntimeError(f"LLM failed after {max_retries} retries.")
 
 
@@ -132,28 +130,28 @@ def safe_generate(prompt: str, model: str, max_retries: int = 3, base_delay: int
 def call_llm(prompt: str, model: str = None):
     """
     Call Groq LLM with the given prompt.
-    
+
     Args:
         prompt: Text prompt for the LLM
         model: Model name (uses PRIMARY_MODEL if not specified)
-    
+
     Returns:
         dict: {"status": "success"|"error", "response"|"error": str}
     """
     target_model = model or PRIMARY_MODEL
-    
+
     if client is None:
         return {"status": "error", "error": init_error}
-    
+
     try:
         raw_response = safe_generate(prompt, target_model)
         text_output = extract_text(raw_response)
-        
+
         if text_output.startswith("["):
             return {"status": "error", "error": text_output}
-        
+
         return {"status": "success", "response": text_output}
-        
+
     except Exception as e:
         return {"status": "error", "error": str(e)}
 

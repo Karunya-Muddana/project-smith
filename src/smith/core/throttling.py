@@ -1,7 +1,7 @@
 """
 Global Throttling & Circuit Breaker Module
 ------------------------------------------
-Provides a singleton rate limiter and circuit breaker to manage 
+Provides a singleton rate limiter and circuit breaker to manage
 traffic to external APIs (Gemini, Groq) globally across the daemon.
 """
 
@@ -16,26 +16,29 @@ from smith.config import config
 
 logger = logging.getLogger("smith.throttling")
 
+
 @dataclass
 class RateLimitConfig:
     rpm: int
     tpm: int
     burst: int = 1
 
+
 class TokenBucket:
     """
     Thread-safe Token Bucket implementation for rate limiting.
     Manages both Requests (RPM) and Tokens (TPM).
     """
+
     def __init__(self, rpm: int, tpm: int, burst: int = 1):
         self.max_tokens_rpm = burst
         self.tokens_rpm = burst
         self.max_tokens_tpm = tpm
         self.tokens_tpm = tpm
-        
+
         self.rpm_fill_rate = rpm / 60.0
         self.tpm_fill_rate = tpm / 60.0
-        
+
         self.last_update = time.time()
         self.lock = threading.Lock()
 
@@ -44,36 +47,36 @@ class TokenBucket:
         elapsed = now - self.last_update
         if elapsed <= 0:
             return
-            
+
         # Refill Request Tokens
         new_rpm = elapsed * self.rpm_fill_rate
         self.tokens_rpm = min(self.max_tokens_rpm, self.tokens_rpm + new_rpm)
-        
+
         # Refill/Use Usage Tokens (TPM refill logic - simplified to just refill)
         new_tpm = elapsed * self.tpm_fill_rate
         self.tokens_tpm = min(self.max_tokens_tpm, self.tokens_tpm + new_tpm)
-        
+
         self.last_update = now
 
     def acquire(self, estimated_tokens: int = 100) -> float:
         """
-        Try to acquire a slot. Returns float seconds to wait. 
+        Try to acquire a slot. Returns float seconds to wait.
         0.0 means go ahead. > 0 means sleep that amount.
         """
         with self.lock:
             self._refill()
-            
+
             # Check basic availability
             if self.tokens_rpm < 1.0:
                 needed = 1.0 - self.tokens_rpm
                 wait = needed / self.rpm_fill_rate
                 return max(0.1, wait)
-                
+
             if self.tokens_tpm < estimated_tokens:
-                 needed = estimated_tokens - self.tokens_tpm
-                 wait = needed / self.tpm_fill_rate
-                 return max(0.1, wait)
-            
+                needed = estimated_tokens - self.tokens_tpm
+                wait = needed / self.tpm_fill_rate
+                return max(0.1, wait)
+
             # Consume
             self.tokens_rpm -= 1.0
             self.tokens_tpm -= estimated_tokens
@@ -88,17 +91,21 @@ class TokenBucket:
             self.tokens_rpm = -1.0 * (seconds * self.rpm_fill_rate)
             logger.warning(f"Throttler Penalized: Global pause for ~{seconds}s")
 
+
 class CircuitBreaker:
     """
     Manages state for a provider (Closed -> Open -> Half-Open).
     """
-    def __init__(self, name: str, failure_threshold: int = 3, recovery_timeout: int = 300):
+
+    def __init__(
+        self, name: str, failure_threshold: int = 3, recovery_timeout: int = 300
+    ):
         self.name = name
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
-        
+
         self.failures = 0
-        self.state = "CLOSED" # CLOSED, OPEN
+        self.state = "CLOSED"  # CLOSED, OPEN
         self.last_failure_time = 0.0
         self.lock = threading.Lock()
 
@@ -108,7 +115,9 @@ class CircuitBreaker:
             self.last_failure_time = time.time()
             if self.failures >= self.failure_threshold:
                 if self.state == "CLOSED":
-                    logger.warning(f"Circuit Breaker OPENED for {self.name} (Failures: {self.failures})")
+                    logger.warning(
+                        f"Circuit Breaker OPENED for {self.name} (Failures: {self.failures})"
+                    )
                     self.state = "OPEN"
 
     def report_success(self):
@@ -123,31 +132,35 @@ class CircuitBreaker:
         with self.lock:
             if self.state == "CLOSED":
                 return False
-            
+
             # Check recovery timeout
             elapsed = time.time() - self.last_failure_time
             if elapsed > self.recovery_timeout:
                 logger.info(f"Circuit Breaker {self.name} probing (Half-Open)...")
-                return False # Let one through to test
-            
+                return False  # Let one through to test
+
             return True
+
 
 class GlobalThrottler:
     """
     Singleton manager for all rate limits and circuits.
     """
+
     def __init__(self):
         self.limiters: Dict[str, TokenBucket] = {}
         self.circuits: Dict[str, CircuitBreaker] = {}
-        
+
         # Initialize Groq
         self.limiters["groq"] = TokenBucket(
             rpm=config.groq_rpm,
             tpm=config.groq_tpm,
-            burst=5 # Allow more burst for fallback
+            burst=5,  # Allow more burst for fallback
         )
         # Groq circuit breaker
-        self.circuits["groq"] = CircuitBreaker("groq", failure_threshold=10, recovery_timeout=30)
+        self.circuits["groq"] = CircuitBreaker(
+            "groq", failure_threshold=10, recovery_timeout=30
+        )
 
     def wait_for_slot(self, provider: str, estimated_tokens: int = 100):
         """
@@ -156,17 +169,17 @@ class GlobalThrottler:
         limiter = self.limiters.get(provider)
         if not limiter:
             return
-            
+
         while True:
             wait_time = limiter.acquire(estimated_tokens)
             if wait_time <= 0.0:
                 break
             # Add jitter to wait time to prevent synchronized wakeups
             jitter = random.uniform(0.0, 0.5)
-            total_wait = min(wait_time + jitter, 30.0) # Cap wait
+            total_wait = min(wait_time + jitter, 30.0)  # Cap wait
             logger.debug(f"RateLimit ({provider}): waiting {total_wait:.2f}s")
             time.sleep(total_wait)
-            
+
     def check_circuit(self, provider: str) -> bool:
         """
         Returns True if circuit is OPEN (blocked), False if OK.
@@ -175,7 +188,7 @@ class GlobalThrottler:
         if not cb:
             return False
         return cb.is_open()
-    
+
     def report_result(self, provider: str, success: bool):
         cb = self.circuits.get(provider)
         if not cb:
@@ -192,6 +205,7 @@ class GlobalThrottler:
         limiter = self.limiters.get(provider)
         if limiter:
             limiter.penalize(wait_seconds)
+
 
 # Singleton Instance
 throttler = GlobalThrottler()

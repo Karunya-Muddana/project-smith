@@ -11,6 +11,7 @@ print(f"API Key present: {bool(API_KEY)}")
 if API_KEY:
     genai.configure(api_key=API_KEY)
 
+
 def test_model(model_name):
     print(f"\nTesting model: {model_name}")
     try:
@@ -21,6 +22,7 @@ def test_model(model_name):
         print(f"✅ Success ({duration:.2f}s): {response.text}")
     except Exception as e:
         print(f"❌ Failed: {e}")
+
 
 test_model("gemini-2.5-flash")
 test_model("gemini-1.5-flash")
