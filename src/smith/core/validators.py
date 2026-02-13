@@ -5,7 +5,7 @@ Prevents LLM from fabricating numeric data or factual claims.
 Enforces tool domain boundaries.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any
 import re
 
 

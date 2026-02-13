@@ -15,7 +15,7 @@ def get_stock_price(symbol: str):
         ticker = yf.Ticker(symbol)
         try:
             price = ticker.fast_info.last_price
-        except:
+        except Exception:
             data = ticker.history(period="1d")
             if data.empty:
                 return {"status": "error", "error": "no data"}

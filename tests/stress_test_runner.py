@@ -86,7 +86,7 @@ def main():
         print(f"  Expected tools: {', '.join(test.get('expected_tools', ['N/A']))}")
         
         if test.get("should_error"):
-            print(f"  ⚠️  Should return error (capability gap)")
+            print("  ⚠️  Should return error (capability gap)")
         
         if test.get("max_llm_calls"):
             print(f"  ⚠️  Max LLM calls: {test['max_llm_calls']}")

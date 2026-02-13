@@ -9,7 +9,7 @@ import time
 import threading
 import random
 import logging
-from typing import Dict, Optional
+from typing import Dict
 from dataclasses import dataclass
 
 from smith.config import config

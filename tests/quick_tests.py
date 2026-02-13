@@ -26,7 +26,7 @@ print("\nCopy and paste each query into Smith CLI:\n")
 for i, (name, query) in enumerate(tests.items(), 1):
     print(f"\n{i}. {name}")
     print(f"   Query: {query}")
-    print(f"   Then run: /inspect")
+    print("   Then run: /inspect")
     print("-" * 80)
 
 print("\n\nAfter each test, check:")

@@ -8,7 +8,6 @@ for the Orchestrator to follow. It uses a clever multi-shot LLM approach to get 
 """
 
 import json
-import logging
 from typing import List, Dict, Any
 
 from smith.config import config

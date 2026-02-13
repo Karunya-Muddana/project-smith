@@ -590,16 +590,11 @@ if __name__ == "__main__":
     try:
         from rich.console import Console
         from rich.panel import Panel
-        from rich.layout import Layout
         from rich.live import Live
         from rich.markdown import Markdown
         from rich.table import Table
-        from rich.style import Style
         from rich.text import Text
         from rich.prompt import Prompt, Confirm
-    except ImportError:
-        pass
-
     except ImportError:
         pass
 
@@ -619,12 +614,12 @@ if __name__ == "__main__":
         text = Text(SMITH_BANNER, style="bold cyan")
         panel = Panel(
             text,
-        title="[bold magenta]Orchestrator v3.0[/bold magenta]",
-        subtitle="[italic white]Type /help for commands[/italic white]",
-        border_style="blue",
-        expand=False
-    )
-    console.print(panel)
+            title="[bold magenta]Orchestrator v3.0[/bold magenta]",
+            subtitle="[italic white]Type /help for commands[/italic white]",
+            border_style="blue",
+            expand=False
+        )
+        console.print(panel)
 
 
 def command_help():

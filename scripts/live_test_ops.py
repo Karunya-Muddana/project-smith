@@ -1,4 +1,3 @@
-import sys
 from smith.core.orchestrator import smith_orchestrator
 
 # Simple query that should trigger LLM directly or Weather tool if registered

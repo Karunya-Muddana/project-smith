@@ -1,4 +1,3 @@
-import sys
 import time
 from smith.core.orchestrator import smith_orchestrator
 
@@ -10,7 +9,7 @@ I need a market and tech brief.
 4. Finally, synthesize all this into a 2-paragraph summary explaining if the news justifies the price.
 """
 
-print(f"=== STARTING STRESS TEST ===")
+print("=== STARTING STRESS TEST ===")
 print(f"Query Length: {len(QUERY)} chars")
 print(f"Query: {QUERY.strip()}")
 print("-" * 50)
@@ -42,7 +41,7 @@ try:
             print(f"[CRITICAL ERROR] {event.get('message')}")
 
     total_time = round(time.time() - start_time, 2)
-    print(f"=== TEST COMPLETE ===")
+    print("=== TEST COMPLETE ===")
     print(f"Total Steps: {step_count}")
     print(f"Total Time: {total_time}s")
 

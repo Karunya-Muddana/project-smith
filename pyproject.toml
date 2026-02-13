@@ -54,15 +54,16 @@ python_files = "test_*.py"
 
 [tool.ruff]
 # Hey! This tool checks your code for bugs and bad practices.
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
 # We enable Pyflakes (F) and pycodestyle (E) to keep things clean.
 select = ["E4", "E7", "E9", "F"]
 ignore = []
 # If you run `ruff check . --fix`, we'll try to auto-fix everything we can.
 fixable = ["ALL"]
 unfixable = []
-# We match Black's line length so they don't fight.
-line-length = 88
-target-version = "py310"
 
 [tool.black]
 # Initializing the 'Black' formatter. It formats your code so it looks professional.

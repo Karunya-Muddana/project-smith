@@ -5,7 +5,6 @@ Loads tool metadata from static JSON file instead of MongoDB.
 """
 
 import json
-import os
 from typing import List, Dict, Any
 from pathlib import Path
 

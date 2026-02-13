@@ -7,7 +7,6 @@ Rebuilt using Rich best practices for reliable progress tracking.
 import sys
 import time
 import json
-from pathlib import Path
 from typing import Dict, Any, List
 from datetime import datetime
 
@@ -16,7 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.markdown import Markdown
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Prompt
 from rich import box
 
 # Smith imports
@@ -191,7 +190,7 @@ def cmd_inspect(session: Session):
                     dep_node = next((n for n in nodes if n.get("id") == dep), None)
                     if dep_node:
                         dep_tool = dep_node.get("tool", "unknown")
-                        console.print(f"       │")
+                        console.print("       │")
                         console.print(f"       ↓ [dim](from {dep_tool})[/dim]")
             
             # Find status from trace
