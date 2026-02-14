@@ -55,6 +55,7 @@ def _global_rate_limit():
             time.sleep(sleep_time)
         _last_call_time = time.time()
 
+
 try:
     from groq import Groq
 

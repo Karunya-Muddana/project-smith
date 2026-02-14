@@ -512,7 +512,7 @@ def smith_orchestrator(
                 # Config parameters
                 n_retry = int(node.get("retry", config.max_retries))
                 n_timeout = float(node.get("timeout", config.default_timeout))
-                
+
                 # Sub-agents need much longer timeout (they run full orchestrator)
                 if tool_name == "sub_agent":
                     n_timeout = max(n_timeout, 120.0)
