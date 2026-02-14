@@ -43,10 +43,10 @@ TESTS = [
 
 def run_smith_query(query: str, test_id: str):
     """Run a query through Smith CLI and capture output."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Running: {test_id}")
     print(f"Query: {query}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     start_time = time.time()
 
@@ -93,10 +93,10 @@ def main():
 
         print("\n" + "-" * 80)
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"All {len(TESTS)} tests outlined.")
     print("Execute manually and record results.")
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
     # Save test plan
     output_file = Path(__file__).parent / "test_results.json"

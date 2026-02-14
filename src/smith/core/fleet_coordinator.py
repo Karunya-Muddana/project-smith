@@ -166,11 +166,11 @@ Example: ["Sub-task 1 description", "Sub-task 2 description", ...]
                     pass
 
             # Fallback: Simple split
-            return [f"{goal} - Part {i+1}/{num_agents}" for i in range(num_agents)]
+            return [f"{goal} - Part {i + 1}/{num_agents}" for i in range(num_agents)]
 
         except Exception:
             # Fallback: Simple split
-            return [f"{goal} - Part {i+1}/{num_agents}" for i in range(num_agents)]
+            return [f"{goal} - Part {i + 1}/{num_agents}" for i in range(num_agents)]
 
     def _run_single_agent(self, task: str, fleet_id: str, agent_index: int) -> Any:
         """

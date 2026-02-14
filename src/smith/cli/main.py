@@ -311,7 +311,6 @@ def execute_query(user_input: str, session: Session) -> str:
         console=console,
         transient=False,
     ) as progress:
-
         # Main task
         main_task = progress.add_task("[cyan]Processing...", total=None)
 
@@ -436,7 +435,7 @@ def cmd_fleet(user_input: str, session: Session):
         # Show sub-tasks
         console.print("[bold]Sub-tasks assigned:[/bold]")
         for i, task in enumerate(result.get("sub_tasks", [])):
-            console.print(f"  {i+1}. {task}")
+            console.print(f"  {i + 1}. {task}")
 
         # Show final result
         console.print("\n[bold]Final Result:[/bold]")

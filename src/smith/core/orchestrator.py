@@ -360,7 +360,6 @@ def smith_orchestrator(
             node["_normalized_deps"] = normalized_deps
 
         while len(completed) < len(nodes):
-
             # --- A. Submit Available Nodes ---
             # We iterate through all nodes to find those whose dependencies are met
             # and haven't been submitted yet.

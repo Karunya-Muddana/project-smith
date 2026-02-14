@@ -15,7 +15,6 @@ with (
     patch("smith.tools.LLM_CALLER.call_llm") as MockLLM,
     patch("smith.planner.plan_task") as MockPlan,
 ):
-
     print("Mocks active.")
 
     # Setup Mocks
