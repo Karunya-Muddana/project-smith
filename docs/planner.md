@@ -164,6 +164,7 @@ To change Planner behavior, the recommended access points are:
 * `SYNTAX_REPAIR_PROMPT` to improve JSON recovery
 * `MAX_PLANNER_ATTEMPTS` to tune reliability vs throughput
 * validation rules if supporting new DAG shapes or tool metadata structures
+* `SUB_AGENT` and `FleetCoordinator` integration patterns
 
 Avoid modifying:
 

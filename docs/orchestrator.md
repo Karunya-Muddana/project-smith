@@ -153,15 +153,117 @@ Examples:
 
 ---
 
-### Performance tuning and concurrency direction
+---
 
-The current Orchestrator executes nodes sequentially even if the DAG contains branches that could run in parallel. This preserves minimum complexity and maximum determinism.
+### Parallel Execution
 
-Future work may introduce an optional concurrency mode with strict guardrails:
+Smith supports parallel execution of independent DAG nodes to improve performance for workflows with fan-out patterns.
 
-* Parallel execution only when nodes have `depends_on = []` or all parents complete.
-* Per‑tool resource quotas.
-* Distributed execution of compute‑heavy tools.
-* Lock‑free trace logging for high‑throughput environments.
+#### Execution Model
 
-Even with parallel scheduling, LLM calls would remain out of the runtime loop. Determinism and replayability will remain non‑negotiable guarantees.
+The orchestrator identifies nodes that can execute concurrently based on their dependencies:
+
+```mermaid
+flowchart TD
+
+A[Start execution]
+B{Find eligible nodes}
+C[Single node ready]
+D[Multiple independent nodes ready]
+E[Execute node sequentially]
+F[Execute nodes in parallel]
+G[Update trace]
+H{More nodes?}
+I[Complete]
+
+A --> B
+B -->|one| C --> E --> G
+B -->|many| D --> F --> G
+G --> H
+H -->|yes| B
+H -->|no| I
+```
+
+#### Parallel Execution Criteria
+
+Nodes execute in parallel when:
+1. All dependencies have completed successfully
+2. No shared resource locks are required
+3. Multiple nodes meet criteria simultaneously
+
+#### Implementation Details
+
+**Thread Pool**: Uses ThreadPoolExecutor for concurrent tool execution.
+
+**Rate Limiting**: Per-tool rate limits still apply, potentially serializing some parallel calls.
+
+**Resource Locking**: Tools requiring the same resource execute serially even if otherwise independent.
+
+**Sub-Agents**: Sub-agents always execute serially via global semaphore, regardless of DAG structure.
+
+#### Performance Characteristics
+
+**Best Case**: Fan-out patterns with independent tools (e.g., parallel API calls to different services).
+
+```
+Example DAG:
+Node 0: google_search (no deps)
+Node 1: finance_fetcher (no deps)
+Node 2: weather_fetcher (no deps)
+Node 3: llm_caller (depends on 0, 1, 2)
+
+Nodes 0, 1, 2 execute in parallel.
+Node 3 waits for all to complete.
+```
+
+**Worst Case**: Linear dependency chains execute sequentially regardless of parallel capability.
+
+```
+Example DAG:
+Node 0: tool_a (no deps)
+Node 1: tool_b (depends on 0)
+Node 2: tool_c (depends on 1)
+
+All nodes execute sequentially.
+```
+
+#### Configuration
+
+Parallel execution is enabled by default. To disable:
+
+```python
+# In orchestrator configuration
+ENABLE_PARALLEL_EXECUTION = False
+```
+
+#### Determinism Guarantees
+
+Parallel execution maintains determinism:
+- Same DAG produces same execution trace
+- Node execution order within parallel batches may vary
+- Final results are identical regardless of execution order
+- Trace timestamps reflect actual execution timing
+
+---
+
+### Performance Tuning and Concurrency
+
+The Orchestrator balances performance with determinism through several mechanisms:
+
+**Sequential Fallback**: When parallel execution is disabled or unavailable, the orchestrator falls back to sequential execution.
+
+**Resource Quotas**: Per-tool resource quotas prevent any single tool from monopolizing system resources.
+
+**Distributed Execution**: Future work may support distributed execution of compute-heavy tools across multiple machines.
+
+**Lock-Free Logging**: Trace logging uses thread-safe data structures to support high-throughput parallel execution.
+
+**Concurrency Limits**: Maximum concurrent tool executions can be configured:
+
+```python
+# In orchestrator configuration
+MAX_CONCURRENT_TOOLS = 5  # Maximum parallel tool executions
+```
+
+Even with parallel scheduling, LLM calls remain outside the runtime loop. Determinism and replayability remain non-negotiable guarantees.
+

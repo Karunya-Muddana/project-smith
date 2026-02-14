@@ -8,6 +8,7 @@ Supports Llama and Mixtral models with automatic fallback.
 import os
 import time
 import logging
+import threading
 from dotenv import load_dotenv
 
 # Set up logging
@@ -35,6 +36,24 @@ PRIMARY_MODEL = VALID_MODELS[0]
 
 client = None
 init_error = None
+
+# Global rate limiter — ensures minimum delay between ALL LLM calls
+# This is shared across all orchestrator instances (parent + sub-agents)
+_global_lock = threading.Lock()
+_last_call_time = 0.0
+_MIN_CALL_INTERVAL = 3.0  # seconds between API calls (strict: 1 call per 3s)
+
+
+def _global_rate_limit():
+    """Enforce global rate limiting across all threads/orchestrators."""
+    global _last_call_time
+    with _global_lock:
+        now = time.time()
+        elapsed = now - _last_call_time
+        if elapsed < _MIN_CALL_INTERVAL:
+            sleep_time = _MIN_CALL_INTERVAL - elapsed
+            time.sleep(sleep_time)
+        _last_call_time = time.time()
 
 try:
     from groq import Groq
@@ -74,6 +93,9 @@ def safe_generate(prompt: str, model: str, max_retries: int = 3, base_delay: int
 
     for attempt in range(max_retries + 1):
         try:
+            # Global rate limit — prevents 429 across all orchestrators
+            _global_rate_limit()
+
             response = client.chat.completions.create(
                 model=current_model,
                 messages=[{"role": "user", "content": prompt}],

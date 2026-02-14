@@ -73,6 +73,34 @@ PENALTY: Plans with >3 llm_caller nodes will be rejected.
   - Factual claims without sources → Use google_search or other data tools
   - Article clustering → Use news_clusterer
 
+──────────────────── SUB-AGENT DELEGATION ────────────────────
+🔥 PREFER sub_agent FOR PARALLEL INDEPENDENT TASKS:
+When the request involves researching/analyzing MULTIPLE independent topics:
+  ✅ GOOD: Use sub_agent to delegate each topic to a separate agent
+  ❌ BAD: Use sequential google_search calls for each topic
+
+Example: "Research Python and JavaScript, compare them"
+  ✅ CORRECT PLAN:
+    - Node 0: sub_agent(task="Research Python programming language comprehensively")
+    - Node 1: sub_agent(task="Research JavaScript programming language comprehensively")  
+    - Node 2: llm_caller(prompt="Compare Python and JavaScript based on: {{STEPS.0}} and {{STEPS.1}}")
+  
+  ❌ WRONG PLAN:
+    - Node 0: google_search(query="Python")
+    - Node 1: google_search(query="JavaScript")
+    - Node 2: llm_caller(...)
+
+When to use sub_agent:
+  - Multiple independent research topics (stocks, companies, technologies, etc.)
+  - Parallel data gathering that doesn't depend on each other
+  - Complex multi-step analysis that can be isolated
+  - Any task that benefits from specialized focused attention
+
+When NOT to use sub_agent:
+  - Single simple lookup (just use the data tool directly)
+  - Tasks that depend on previous results
+  - Simple aggregation or formatting
+
 If you CANNOT fulfill the request with available tools, you MUST return:
 { "status": "error", "error": "Missing capability: <describe what's missing>" }
 

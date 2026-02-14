@@ -33,6 +33,8 @@ try:
     from smith import registry  # Static registry instead of MongoDB
     from smith import tool_loader
     from smith.core.validators import validate_tool_authority  # Authority validation
+    from smith.core.resource_lock import get_lock_manager  # Resource locking
+    from smith.core.agent_state import get_state_manager  # noqa: F401
 except ImportError as e:
     # Fail fast if the package structure is invalid
     sys.stderr.write(
@@ -223,6 +225,7 @@ def resolve_prompt_placeholders(prompt: str, trace: List[Dict[str, Any]]) -> str
 def smith_orchestrator(
     user_msg: str,
     require_approval: bool = config.require_approval,
+    exclude_tools: list = None,
 ) -> Generator[Dict[str, Any], None, None]:
     """
     The Main Event Loop.
@@ -241,6 +244,9 @@ def smith_orchestrator(
     # 1) Read tool registry (static JSON) ------------------------------------
     try:
         tools_list = registry.get_tools_registry()
+        # Filter out excluded tools (e.g., sub_agent inside sub-agents)
+        if exclude_tools:
+            tools_list = [t for t in tools_list if t.get("name") not in exclude_tools]
         tool_registry = {t["name"]: t for t in tools_list}
     except Exception as e:
         msg = f"Failed to load tool registry: {e}"
@@ -454,22 +460,44 @@ def smith_orchestrator(
                 # Apply Rate Limit (Blocking sleep if needed)
                 limiter.wait_if_needed(tool_name)
 
-                # Prepare Task Logic
+                # Prepare Task Logic with Resource Locking
                 def _run_node_logic(
                     _fn: Callable,
                     _args: Dict,
                     _meta: Dict,
                     _timeout: float,
                     _retries: int,
+                    _tool_name: str,
+                    _agent_id: str,
                 ) -> Dict[str, Any]:
-                    _out = {"status": "error", "error": "Not run"}
-                    for attempt in range(_retries + 1):
-                        _out = execute_with_timeout(_fn, _args, _timeout)
-                        if _out.get("status") == "success":
-                            break
-                        if attempt < _retries:
-                            time.sleep(1)
-                    return _out
+                    # Skip locking for sub_agent (spawns own orchestrator)
+                    needs_lock = _tool_name != "sub_agent"
+                    lock_mgr = None
+
+                    if needs_lock:
+                        lock_mgr = get_lock_manager()
+                        lock_timeout = config.tool_lock_timeout
+                        lock_acquired = lock_mgr.acquire_tool_lock(
+                            _tool_name, _agent_id, timeout=lock_timeout
+                        )
+                        if not lock_acquired:
+                            return {
+                                "status": "error",
+                                "error": f"Could not acquire lock for {_tool_name} (timeout after {lock_timeout}s)",
+                            }
+
+                    try:
+                        _out = {"status": "error", "error": "Not run"}
+                        for attempt in range(_retries + 1):
+                            _out = execute_with_timeout(_fn, _args, _timeout)
+                            if _out.get("status") == "success":
+                                break
+                            if attempt < _retries:
+                                time.sleep(1)
+                        return _out
+                    finally:
+                        if needs_lock and lock_mgr:
+                            lock_mgr.release_tool_lock(_tool_name, _agent_id)
 
                 # Load function
                 try:
@@ -484,10 +512,25 @@ def smith_orchestrator(
                 # Config parameters
                 n_retry = int(node.get("retry", config.max_retries))
                 n_timeout = float(node.get("timeout", config.default_timeout))
+                
+                # Sub-agents need much longer timeout (they run full orchestrator)
+                if tool_name == "sub_agent":
+                    n_timeout = max(n_timeout, 120.0)
+                    n_retry = 0  # Don't retry sub-agents
 
-                # Submit to ThreadPool
+                # Get current agent ID (or use run_id as fallback)
+                agent_id = getattr(config, "_current_agent_id", run_id)
+
+                # Submit to ThreadPool with resource locking
                 fut = executor.submit(
-                    _run_node_logic, fn_obj, safe_args, meta, n_timeout, n_retry
+                    _run_node_logic,
+                    fn_obj,
+                    safe_args,
+                    meta,
+                    n_timeout,
+                    n_retry,
+                    tool_name,
+                    agent_id,
                 )
                 futures[fut] = idx
                 submitted.add(idx)

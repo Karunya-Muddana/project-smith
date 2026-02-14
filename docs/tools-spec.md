@@ -8,7 +8,7 @@ This document defines the requirements and conventions for building tools in the
 
 ### 1. Tool File Requirements
 
-A Smith tool is a standalone Python file located in `smith/tools/`. Every tool **must** provide:
+A Smith tool is a standalone Python file located in `src/smith/tools/`. Every tool **must** provide:
 
 * a callable function that performs the operation
 * a `METADATA` dictionary that formally describes the tool to the Planner
@@ -189,13 +189,13 @@ Everything must work without hidden global state.
 
 The flow of a tool from creation to execution is deterministic:
 
-1. Developer creates `smith/tools/MY_TOOL.py` with function + METADATA
-2. Developer runs `python -m smith.tools_populator`
-3. Populator reads METADATA and registers tool in MongoDB
-4. Planner queries registry and uses tool metadata when compiling a DAG
-5. Orchestrator loads the function dynamically at execution time
-6. Execution result is appended to the trace
-7. The trace becomes part of final LLM synthesis
+1. Developer creates `src/smith/tools/MY_TOOL.py` with function + METADATA
+2. Developer adds tool metadata to `src/smith/tools/registry.json`
+3. Planner queries registry and uses tool metadata when compiling a DAG
+4. Orchestrator loads the function dynamically at execution time
+5. Execution result is appended to the trace
+6. The trace becomes part of final LLM synthesis
+7. The trace generated becomes available for subsequent tools and final synthesis
 
 No core engine modification is ever required.
 

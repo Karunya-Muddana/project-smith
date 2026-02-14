@@ -24,6 +24,7 @@ from rich.progress import (
 )
 from rich.prompt import Prompt
 from rich import box
+from rich.tree import Tree
 
 # Smith imports
 from smith.core.orchestrator import smith_orchestrator
@@ -383,6 +384,134 @@ def execute_query(user_input: str, session: Session) -> str:
     session.last_dag = dag_plan
 
     return final_answer
+
+
+def cmd_fleet(user_input: str, session: Session):
+    """Handle /fleet command to activate fleet mode"""
+    from smith.core.fleet_coordinator import get_fleet_coordinator
+    from smith.config import config
+    from rich.prompt import IntPrompt
+
+    # Check if fleet mode is enabled
+    if not config.enable_fleet_mode:
+        console.print("[yellow]⚠ Fleet mode is disabled in configuration[/yellow]")
+        return
+
+    # Extract goal from command
+    parts = user_input.split(maxsplit=1)
+    if len(parts) < 2:
+        console.print("[yellow]Usage: /fleet <goal>[/yellow]")
+        console.print("[dim]Example: /fleet Analyze the top 5 tech stocks[/dim]")
+        return
+
+    goal = parts[1].strip()
+
+    # Ask for number of agents
+    try:
+        num_agents = IntPrompt.ask(
+            f"[cyan]How many agents?[/cyan] (1-{config.max_fleet_size})", default=3
+        )
+
+        if num_agents < 1 or num_agents > config.max_fleet_size:
+            console.print(
+                f"[red]Number of agents must be between 1 and {config.max_fleet_size}[/red]"
+            )
+            return
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Fleet mode cancelled[/yellow]")
+        return
+
+    # Run fleet
+    console.print(
+        f"\n[bold cyan]🚀 Launching fleet of {num_agents} agents...[/bold cyan]\n"
+    )
+
+    coordinator = get_fleet_coordinator()
+    result = coordinator.run_fleet(goal, num_agents)
+
+    # Display results
+    if result.get("status") == "success":
+        console.print("\n[bold green]✓ Fleet completed successfully![/bold green]\n")
+
+        # Show sub-tasks
+        console.print("[bold]Sub-tasks assigned:[/bold]")
+        for i, task in enumerate(result.get("sub_tasks", [])):
+            console.print(f"  {i+1}. {task}")
+
+        # Show final result
+        console.print("\n[bold]Final Result:[/bold]")
+        final_result = result.get("final_result", "No result")
+        console.print(Panel(Markdown(final_result), border_style="green"))
+
+        # Add to session
+        session.add_interaction(user_input, final_result)
+    else:
+        error = result.get("error", "Unknown error")
+        console.print(f"\n[red]✗ Fleet failed: {error}[/red]")
+
+
+def cmd_subagents():
+    """Show active sub-agents hierarchy"""
+    from smith.core.agent_state import get_state_manager
+
+    state_mgr = get_state_manager()
+    stats = state_mgr.get_stats()
+
+    # Show statistics
+    console.print("\n[bold]Agent Statistics:[/bold]")
+    table = Table(box=box.ROUNDED)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="white")
+
+    table.add_row("Total Agents", str(stats.get("total_agents", 0)))
+    table.add_row("Active Agents", str(stats.get("active_agents", 0)))
+    table.add_row("Root Agents", str(stats.get("root_agents", 0)))
+
+    console.print(table)
+
+    # Show agent tree
+    root_agents = state_mgr.get_root_agents()
+
+    if not root_agents:
+        console.print("\n[dim]No active agents[/dim]")
+        return
+
+    console.print("\n[bold]Agent Hierarchy:[/bold]\n")
+
+    for root in root_agents:
+        tree = Tree(f"[bold cyan]{root.agent_id}[/bold cyan] - {root.task[:50]}...")
+        _build_agent_tree(tree, root, state_mgr)
+        console.print(tree)
+
+
+def _build_agent_tree(tree, agent, state_mgr):
+    """Recursively build agent tree for display"""
+    children = state_mgr.get_children(agent.agent_id)
+
+    for child in children:
+        status_icon = {
+            "initializing": "⏳",
+            "running": "▶",
+            "completed": "✓",
+            "failed": "✗",
+            "cancelled": "⊘",
+        }.get(child.status.value, "?")
+
+        status_color = {
+            "initializing": "yellow",
+            "running": "cyan",
+            "completed": "green",
+            "failed": "red",
+            "cancelled": "dim",
+        }.get(child.status.value, "white")
+
+        branch = tree.add(
+            f"[{status_color}]{status_icon}[/{status_color}] "
+            f"[bold]{child.agent_id}[/bold] - {child.task[:40]}..."
+        )
+
+        # Recursively add children
+        _build_agent_tree(branch, child, state_mgr)
 
 
 # ============================================================================

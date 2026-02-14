@@ -139,26 +139,137 @@ F -->|fail — halt| H
 Tools are **plug‑and‑play** and require **no modification of the core engine**.
 
 1. Developer creates a Python file in `smith/tools/`
-2. Developer runs `python -m smith.tools_populator`
-3. Populator extracts METADATA and registers it in MongoDB
+2. Developer adds METADATA block to the tool file
+3. Tool metadata is included in `registry.json`
 4. Planner immediately sees the tool in the next planning cycle
 
 ```mermaid
 flowchart TD
 
 A[Developer creates NEW_TOOL.py]
-B[Run tools_populator]
-C[Scan smith/tools directory]
-D[Extract METADATA]
-E[Write metadata to MongoDB registry]
-F[Planner queries registry for available tools]
+B[Add METADATA block to tool]
+C[Update registry.json]
+D[Planner loads registry]
+E[Tool available for planning]
 
-A --> B --> C --> D --> E --> F
+A --> B --> C --> D --> E
 ```
 
 ---
 
-## 5. Pipeline Summary & Core Principles
+## 5. Sub-Agent Architecture — Recursive Task Delegation
+
+Sub-agents enable hierarchical task decomposition by spawning child Smith instances that run complete planning and execution cycles.
+
+### Sub-Agent Execution Model
+
+```mermaid
+flowchart TD
+
+A[Parent agent receives complex task]
+B[Planner generates DAG with sub_agent nodes]
+C[Orchestrator encounters sub_agent node]
+D[Spawn child Smith instance]
+E[Child runs full planning cycle]
+F[Child executes its own DAG]
+G[Child returns final result]
+H[Parent continues with result]
+
+A --> B --> C --> D
+D --> E --> F --> G --> H
+```
+
+### Key Characteristics
+
+**Serialization**: Sub-agents execute one at a time via global semaphore to prevent API rate limit cascades.
+
+**Depth Limiting**: Maximum recursion depth (default: 3) prevents infinite delegation chains.
+
+**Tool Access**: Sub-agents have access to all tools except `sub_agent` itself, preventing recursive spawning.
+
+**State Tracking**: Parent-child relationships are tracked in the agent state manager for debugging and monitoring.
+
+### Sub-Agent Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant Parent as Parent Agent
+    participant SubAgent as Sub-Agent
+    participant Planner as Planner
+    participant Tools as Tools
+
+    Parent->>SubAgent: Delegate task
+    SubAgent->>Planner: Generate plan
+    Planner-->>SubAgent: Return DAG
+    SubAgent->>Tools: Execute tools
+    Tools-->>SubAgent: Return results
+    SubAgent->>SubAgent: Synthesize answer
+    SubAgent-->>Parent: Return final result
+```
+
+### Use Cases
+
+**Multi-Topic Research**: Delegate independent research topics to separate sub-agents that run in sequence.
+
+**Hierarchical Decomposition**: Break complex tasks into sub-tasks, each handled by a dedicated agent.
+
+**Specialized Processing**: Use sub-agents for tasks requiring different tool combinations or execution strategies.
+
+---
+
+## 6. Fleet Coordination — Parallel Multi-Agent Execution
+
+Fleet coordination enables parallel execution of multiple independent agents working toward a common goal.
+
+### Fleet Architecture
+
+```mermaid
+flowchart TD
+
+A[User submits complex goal]
+B[Fleet Coordinator receives goal]
+C[LLM decomposes into N sub-tasks]
+D[Spawn N agents in parallel]
+E1[Agent 1 executes sub-task 1]
+E2[Agent 2 executes sub-task 2]
+E3[Agent N executes sub-task N]
+F[Collect all results]
+G[LLM aggregates results]
+H[Return final answer]
+
+A --> B --> C --> D
+D --> E1
+D --> E2
+D --> E3
+E1 --> F
+E2 --> F
+E3 --> F
+F --> G --> H
+```
+
+### Fleet Execution Model
+
+**Decomposition**: Fleet coordinator uses LLM to break goal into independent sub-tasks.
+
+**Parallel Execution**: Agents run concurrently using ThreadPoolExecutor.
+
+**Result Aggregation**: LLM synthesizes individual agent results into comprehensive final answer.
+
+**Fault Tolerance**: Individual agent failures do not halt entire fleet execution.
+
+### Fleet vs Sub-Agent Comparison
+
+| Aspect | Sub-Agents | Fleet Coordination |
+|--------|-----------|-------------------|
+| **Execution** | Sequential (serialized) | Parallel (concurrent) |
+| **Use Case** | Hierarchical decomposition | Independent parallel tasks |
+| **Coordination** | Parent-child relationship | Peer agents with coordinator |
+| **Failure Handling** | Propagates to parent | Isolated per agent |
+| **Resource Usage** | Lower (one at a time) | Higher (multiple concurrent) |
+
+---
+
+## 7. Pipeline Summary & Core Principles
 
 ###  Smith Pipeline Summary
 
@@ -190,6 +301,8 @@ A --> B --> C --> D --> E --> F --> G
 * **One‑Shot Planning** — LLM never participates during tool execution.
 * **Fail‑Safety** — every tool has retry, timeout, and failure rules.
 * **Security** — tools are stateless, isolated, and never invoked implicitly.
+* **Hierarchical Execution** — sub-agents and fleet coordination enable complex task decomposition.
+* **Controlled Parallelism** — fleet coordination provides parallelism while maintaining determinism.
 
 **Mental Model:**
 
@@ -197,3 +310,5 @@ A --> B --> C --> D --> E --> F --> G
 * Orchestrator = runtime
 * Tools = system calls
 * Final LLM = renderer, not controller
+* Sub-agents = recursive function calls
+* Fleet = parallel process execution

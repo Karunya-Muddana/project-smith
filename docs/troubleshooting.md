@@ -1,4 +1,4 @@
-# troubleshooting.md
+# Troubleshooting Guide
 
 This file is written for developers who want to debug Smith under real failure conditions. No theory, no generic advice. If you see a specific error message, this document tells you exactly what it means and what to do next.
 
@@ -95,28 +95,28 @@ Add controlled error handling inside the tool so that failures become predictabl
 
 ---
 
-## 4. Populator and Registry failures
+## 4. Registry failures
 
-#### Case 11 — "No metadata found" during population
-
-Meaning:
-The tool file does not define METADATA.
-Fix:
-Add METADATA and run the populator again.
-
-#### Case 12 — "Insert failed: duplicate name"
+#### Case 11 — "Tool not found in registry"
 
 Meaning:
-Two tools share the same metadata.name.
+The tool is not listed in `registry.json`.
 Fix:
-Every tool must have a globally unique name.
+Add the tool metadata to `src/smith/tools/registry.json` and restart Smith.
+
+#### Case 12 — "Duplicate tool name in registry"
+
+Meaning:
+Two tools share the same metadata.name in registry.json.
+Fix:
+Every tool must have a globally unique name. Rename one of the tools.
 
 #### Case 13 — "Planner does not see the tool"
 
 Meaning:
-Metadata exists in the file but the populator was not run after adding the tool.
+Tool exists in code but not in registry.json.
 Fix:
-Run python -m smith.tools_populator.
+Add tool metadata to `registry.json` and restart Smith.
 
 ---
 
@@ -138,13 +138,148 @@ Planner generated a DAG with no meaningful work. Improve the prompt or expand av
 
 ---
 
-## 6. Confirming fixes
+## 6. Recent Issues (v0.1.0)
 
-After resolving an issue, rerun in this order:
+This section documents issues discovered and resolved in recent development.
 
-1. python -m smith.tools_populator
-2. python -m smith.orchestrator
+#### Case 16 — "Sub-agent deadlock"
+
+**Symptoms**: Sub-agent execution hangs indefinitely, never returning to parent agent.
+
+**Meaning**: Event key mismatch between sub-agent and parent orchestrator. Sub-agent emits `final_answer` event but parent expects different key structure.
+
+**Fix**: 
+- Ensure sub-agent uses correct event schema matching orchestrator expectations
+- Verify `final_answer` event payload structure
+- Check that sub-agent properly propagates events to parent
+
+**Resolution**: Fixed in v0.1.0 by standardizing event handling in `SUB_AGENT.py`.
+
+#### Case 17 — "Rate limit exceeded (429 errors)"
+
+**Symptoms**: Frequent 429 errors from LLM API, especially with fleet coordination or multiple sub-agents.
+
+**Meaning**: Too many concurrent API calls exceeding provider rate limits.
+
+**Fix**:
+- Increase rate limit delays in configuration
+- Reduce fleet size (`MAX_FLEET_SIZE`)
+- Use sub-agents instead of fleet for sequential tasks
+- Implement exponential backoff for retries
+
+**Configuration**:
+```python
+DEFAULT_LIMITS = {
+    "llm_caller": 2.0,  # Increase from 1.0
+    "google_search": 1.0,
+}
+```
+
+#### Case 18 — "Parallel execution causes resource contention"
+
+**Symptoms**: Tools fail intermittently when parallel execution is enabled.
+
+**Meaning**: Multiple tools accessing same resource simultaneously without proper locking.
+
+**Fix**:
+- Add resource declarations to tool metadata
+- Use resource locking for shared resources
+- Disable parallel execution if tools are not thread-safe
+
+**Example**:
+```python
+METADATA = {
+    "name": "database_writer",
+    "resources": ["database_connection"],  # Declare resource
+    # ...
+}
+```
+
+#### Case 19 — "CLI command 'smith' not found after installation"
+
+**Symptoms**: `smith` command not available in terminal after `pip install -e .`
+
+**Meaning**: Entry point not registered or virtual environment not activated.
+
+**Fix**:
+- Ensure virtual environment is activated
+- Reinstall: `pip install -e .`
+- Check `pyproject.toml` has correct entry point configuration
+- Try `python -m smith.cli.main` as fallback
+
+#### Case 20 — "ASCII banner syntax warning"
+
+**Symptoms**: SyntaxWarning about invalid escape sequences in ASCII art.
+
+**Meaning**: Backslashes in ASCII art not properly escaped.
+
+**Fix**: Use raw strings (r"...") for ASCII art or escape backslashes properly.
+
+**Example**:
+```python
+# Before
+banner = "  ____   __  __  _____"
+
+# After
+banner = r"  ____   __  __  _____"
+```
+
+#### Case 21 — "Sub-agent exceeds timeout"
+
+**Symptoms**: Sub-agent tasks timeout even though individual tools complete successfully.
+
+**Meaning**: Default timeout too short for full sub-agent orchestration cycle (planning + execution + synthesis).
+
+**Fix**: Increase sub-agent timeout in DAG node:
+```python
+{
+    "id": 0,
+    "tool": "sub_agent",
+    "timeout": 120,  # Increase from default 45
+    # ...
+}
+```
+
+#### Case 22 — "Fleet coordination returns partial results"
+
+**Symptoms**: Fleet completes but some agent results are missing.
+
+**Meaning**: Individual agents failed but fleet continued execution.
+
+**Fix**:
+- Check individual agent error logs
+- Reduce fleet size to isolate failing agents
+- Ensure all sub-tasks are truly independent
+- Add error handling in fleet aggregation
+
+---
+
+## 7. Confirming fixes
+
+After resolving an issue, verify the fix:
+
+1. Restart Smith: `smith`
+2. Test with simple query
+3. Check execution trace: `/trace`
+4. Verify no errors in logs
 
 If Planner succeeds and DAG executes without halt, the system is healthy.
+
+---
+
+## 8. Getting Help
+
+If you encounter an issue not covered here:
+
+1. Check execution trace with `/trace` command
+2. Export session for analysis: `/export`
+3. Review logs for detailed error messages
+4. Search GitHub issues for similar problems
+5. Open new issue with:
+   - Smith version
+   - Python version
+   - Full error message
+   - Minimal reproducible example
+   - Execution trace
 
 End of document.

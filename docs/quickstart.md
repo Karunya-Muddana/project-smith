@@ -1,133 +1,209 @@
-## 🚀 Quick Start
+# Quickstart Guide
 
-This section gets you from zero to a running autonomous Smith agent in a few minutes.
+This guide will help you install and run Smith in under 10 minutes.
 
-### 1. Clone the repository
+## Prerequisites
+
+- Python 3.10 or higher
+- pip package manager
+- Git
+- API keys for desired tools
+
+## Installation Steps
+
+### 1. Clone the Repository
+
 ```bash
-git clone https://github.com/<your-repo>/project-smith.git
+git clone https://github.com/Karunya-Muddana/project-smith.git
 cd project-smith
 ```
 
-### 2. Create & activate a Python virtual environment
+### 2. Create Virtual Environment
+
 ```bash
+# Create virtual environment
 python -m venv venv
+
+# Activate virtual environment
 # Windows
 venv\Scripts\activate
-# Mac / Linux
+
+# macOS / Linux
 source venv/bin/activate
 ```
 
-### 3. Install dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Set up `.env`
-Create a file named `.env` in the project root and add API keys for the tools you want to use.
-
-Example:
-```
-GOOGLE_API_KEY=your_key
-SEARCH_ENGINE_ID=your_cx
-WEATHER_API_KEY=your_key
-```
-
-> Tools without API keys still work — the agent only calls what you request.
-
-### 5. Start MongoDB
-Smith requires a running MongoDB instance.
-
-Default expected URI:
-```
-mongodb://root:password@localhost:27017/project_smith?authSource=admin
-```
-
-If you run via Docker:
-```bash
-docker compose up -d
-```
-
-### 6. Populate the Tool Registry
-Smith scans the `/smith/tools` folder and registers all tools automatically.
+### 3. Install Dependencies
 
 ```bash
-python -m smith.tools_populator
+# Install Smith in editable mode
+pip install -e .
 ```
 
-You should see logs like:
-```
-Registered: google_search
-Registered: weather_fetcher
-Registered: finance_fetcher
-...
+This installs Smith and all required dependencies including:
+- groq (LLM API client)
+- yfinance (financial data)
+- rich (CLI formatting)
+- typer (CLI framework)
+- requests, beautifulsoup4 (web scraping)
+
+### 4. Configure Environment
+
+Create a `.env` file in the project root directory:
+
+```ini
+# Required: LLM API key for planning and synthesis
+GROQ_API_KEY="gsk_your_key_here"
+
+# Optional: Google Search (required for google_search tool)
+GOOGLE_API_KEY="AIzaSy_your_key_here"
+SEARCH_ENGINE_ID="your_cx_here"
+
+# Optional: Other tool configurations
+# Add additional API keys as needed
 ```
 
-### 7. Launch the autonomous agent CLI
+**Note**: Tools without API keys will still be registered but will fail if called. The planner only uses tools for which you have configured credentials.
+
+### 5. Verify Installation
+
+Check that Smith is installed correctly:
+
 ```bash
-python -m smith.orchestrator
+# Verify CLI is available
+smith --help
+
+# Check Python package
+python -c "from smith.core.orchestrator import smith_orchestrator; print('Smith installed successfully')"
 ```
 
-You’ll see:
-```
-[SYSTEM] SMITH ENGINE v3.x (DAG)
-> Command (or 'exit'):
-```
+## First Run
 
-### 8. Run your first workflow
-Try something guaranteed to work:
+### Launch Interactive CLI
 
-```
-google_search "latest AI trends 2025"; then llm_caller → summarize
-```
-
-This will:
-1. call Google Search
-2. send results to the LLM
-3. return a summary
-
-### 9. Multi-tool workflow (more complex demo)
-```
-google_search "top tech companies in Germany";
-weather_fetcher Berlin;
-finance_fetcher price AAPL;
-then llm_caller → combine into an investment report
-```
-
-Smith automatically:
-- generates a JSON DAG plan,
-- runs tools in correct order,
-- injects all data into the final LLM call,
-- prints the result.
-
-### 10. Add your first new tool (optional)
-Drop any Python file into:
-```
-/smith/tools/
-```
-with a valid `METADATA` block and a callable function.
-
-Then re-scan:
 ```bash
-python -m smith.tools_populator
+smith
 ```
 
-The planner will start using the tool automatically when user requests match its parameters.
+You should see the Smith banner and prompt:
 
----
-
-### Success Checkpoint
-If you see:
 ```
-Planner produced a valid DAG with N node(s).
-```
-you’re good — the system is fully operational.
+  ____   __  __  _____  _______  _    _
+ / ___| |  \/  ||_   _||__   __|| |  | |
+| (___  | \  / |  | |     | |   | |__| |
+ \___ \ | |\/| |  | |     | |   |  __  |
+ ____) || |  | | _| |_    | |   | |  | |
+|_____/ |_|  |_||_____|   |_|   |_|  |_|
 
-If you see:
-```
-Planning failed
-```
-jump to the Troubleshooting section later in the docs.
+Smith v0.1.0 - Zero-Trust Agent Runtime
+Type /help for commands or enter a request.
 
----
+>
+```
 
-**You are now ready to build autonomous workflows and plug in new tools without touching the core engine.**
+### Run Your First Task
+
+Try a simple task:
+
+```
+> What is the current stock price of Apple?
+```
+
+Smith will:
+1. Generate an execution plan (DAG)
+2. Execute the `finance_fetcher` tool
+3. Use `llm_caller` to format the response
+4. Display the result
+
+### Example Multi-Tool Workflow
+
+```
+> Research quantum computing developments and summarize the findings
+```
+
+This will trigger:
+1. `google_search` or `arxiv_search` for research
+2. `llm_caller` for synthesis
+3. Formatted output
+
+## CLI Commands Reference
+
+Once in the Smith CLI, you have access to these commands:
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Display available commands |
+| `/tools` | List all registered tools with descriptions |
+| `/trace` | Show execution trace of last run |
+| `/dag` | Export last execution DAG as JSON |
+| `/inspect` | Display ASCII flowchart of DAG and trace |
+| `/history` | Show conversation history |
+| `/export` | Export session to markdown file |
+| `/clear` | Clear the screen |
+| `/quit` or `/exit` | Exit Smith |
+
+## Programmatic Usage
+
+You can also use Smith programmatically in your Python code:
+
+```python
+from smith.core.orchestrator import smith_orchestrator
+
+# Execute a task
+for event in smith_orchestrator("What is the weather in Berlin?"):
+    # Handle different event types
+    if event["type"] == "planning":
+        print("Planning phase...")
+    elif event["type"] == "tool_start":
+        print(f"Executing: {event['payload']['tool']}")
+    elif event["type"] == "final_answer":
+        print("Result:", event["payload"]["response"])
+    elif event["type"] == "error":
+        print("Error:", event["message"])
+```
+
+## Verification Checklist
+
+Confirm your installation is working:
+
+- [ ] `smith` command launches CLI
+- [ ] `/tools` shows list of available tools
+- [ ] Simple query executes successfully
+- [ ] Execution trace is visible with `/trace`
+- [ ] No import errors or missing dependencies
+
+## Common Issues
+
+### Issue: "Command 'smith' not found"
+
+**Solution**: Ensure you installed with `pip install -e .` and your virtual environment is activated.
+
+### Issue: "GROQ_API_KEY not found"
+
+**Solution**: Create a `.env` file in the project root with your API key.
+
+### Issue: "Planning failed"
+
+**Solution**: Check that your GROQ_API_KEY is valid and you have internet connectivity.
+
+### Issue: Tool execution fails
+
+**Solution**: Verify you have configured API keys for the specific tool. Use `/tools` to see which tools require credentials.
+
+## Next Steps
+
+- Read [architecture.md](architecture.md) to understand how Smith works
+- Review [tools-spec.md](tools-spec.md) to learn about creating custom tools
+- Explore [advanced-features.md](advanced-features.md) for sub-agents and fleet coordination
+- Check [troubleshooting.md](troubleshooting.md) for detailed error resolution
+
+## Success Indicators
+
+You have successfully installed Smith when:
+
+1. The CLI launches without errors
+2. You can execute a simple task end-to-end
+3. The execution trace shows tool calls and results
+4. The final LLM synthesis produces a readable answer
+
+If any of these fail, consult the troubleshooting guide or check the logs for specific error messages.
+

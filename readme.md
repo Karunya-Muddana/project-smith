@@ -1,110 +1,238 @@
-# Smith 🕵️‍♂️
-**The Zero-Trust Agent Runtime that actually works.**
+# Smith
 
-Welcome to Project Smith! Build autonomous agents that you can actually trust. No more infinite loops, no more hallucinations wiping your database—just deterministic, reliable execution.
+[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/Karunya-Muddana/project-smith)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+
+**Zero-Trust Autonomous Agent Runtime with Deterministic Execution**
+
+Smith is a production-grade autonomous agent framework that eliminates the unpredictability of traditional LLM-based agents. By using a compiler-runtime architecture with DAG-based planning, Smith guarantees deterministic execution, prevents infinite loops, and provides complete audit trails.
 
 ---
 
-## Why Smith?
-Building agents is hard. Most "autonomous" frameworks are just `while(true)` loops that guess what to do next. That's scary in production.
+## Overview
 
-**Smith is different.**
-- **Plan First, Act Later**: We use a "Planner" to verify the entire sequence of actions *before* execution starts.
-- **No Infinite Loops**: Since we use a DAG (Directed Acyclic Graph), the agent literally *cannot* loop forever.
-- **You are in Control**: Sensitive tools (like deleting files) can require your explicit "Y/N" approval.
+Traditional autonomous agents operate as reactive loops where LLMs make runtime decisions about tool execution. This approach introduces unpredictability, infinite loop risks, and debugging challenges that make production deployment difficult.
 
-## 🚀 Quick Start
+Smith takes a fundamentally different approach:
 
-### 1. Install
+**Compile-Time Planning**: Natural language requests are compiled into validated execution graphs (DAGs) before any tools execute.
+
+**Deterministic Runtime**: The orchestrator executes the DAG exactly as planned with no improvisation or runtime LLM decisions.
+
+**Mathematical Guarantees**: DAG structure makes infinite loops mathematically impossible.
+
+**Complete Traceability**: Every decision and execution step is logged for audit and debugging.
+
+### Key Differentiators
+
+- **No Infinite Loops**: DAG structure prevents cycles by design
+- **Predictable Costs**: All tool calls are known before execution begins
+- **Audit Trail**: Complete execution trace for compliance and debugging
+- **Separation of Concerns**: Planning, execution, and synthesis are isolated
+- **Production-Ready**: Built-in timeout, retry, rate limiting, and resource locking
+
+---
+
+## Architecture
+
+Smith operates as a three-stage pipeline:
+
+```
+User Request → Planner (Compiler) → DAG (Bytecode) → Orchestrator (Runtime) → Result
+```
+
+### Components
+
+**Planner**: Compiles natural language into validated JSON DAGs using LLM-based code generation with strict schema validation.
+
+**Orchestrator**: Executes DAG nodes deterministically with timeout enforcement, retry logic, and failure handling.
+
+**Tools**: Stateless functions with metadata-driven schemas. Tools are plug-and-play with no core engine modifications required.
+
+**Sub-Agents**: Recursive agent delegation for complex multi-step tasks with depth limiting.
+
+**Fleet Coordinator**: Parallel multi-agent execution for independent workloads.
+
+See [docs/architecture.md](docs/architecture.md) for detailed architecture documentation.
+
+---
+
+## Installation
+
+### Prerequisites
+
+- Python 3.10 or higher
+- pip package manager
+- API keys for desired tools (Groq, Google Search, etc.)
+
+### Quick Install
+
 ```bash
-# Clone the repo
+# Clone repository
 git clone https://github.com/Karunya-Muddana/project-smith.git
 cd project-smith
 
-# Install in editable mode (so your changes apply instantly)
+# Install package
 pip install -e .
 ```
 
-### 2. Configure
-Create a `.env` file with your API keys:
+### Configuration
+
+Create a `.env` file in the project root:
+
 ```ini
+# Required: LLM API key
 GROQ_API_KEY="gsk_..."
-# Optional:
+
+# Optional: Additional tool APIs
 GOOGLE_API_KEY="AIzaSy..."
 SEARCH_ENGINE_ID="..."
 ```
 
-### 3. Run It!
-Start the interactive CLI:
+See [docs/quickstart.md](docs/quickstart.md) for detailed installation instructions.
+
+---
+
+## Usage
+
+### Interactive CLI
+
+Launch the Smith CLI:
+
 ```bash
 smith
 ```
 
-Or use the Python API:
+Example session:
+
+```
+> Research the latest developments in quantum computing
+
+[Planning] Generating execution plan...
+[Execution] Running 3 tools...
+[Complete] Research complete.
+
+Quantum computing has seen significant advances in 2026...
+```
+
+### Python API
+
 ```python
 from smith.core.orchestrator import smith_orchestrator
 
+# Execute a task programmatically
 for event in smith_orchestrator("What is the stock price of AAPL?"):
     if event["type"] == "final_answer":
         print(event["payload"]["response"])
 ```
 
-## 🧠 How it Works (The Cool Part)
-
-### The Architecture
-1.  **Planner (The Architect)**: You say "Check stock price of Apple". The Planner writes a JSON blueprint (DAG).
-2.  **Orchestrator (The Conductor)**: Runs the blueprint step-by-step.
-    - Step 1: `finance_fetcher` → Gets AAPL price.
-    - Step 2: `llm_caller` → Summarizes it for you.
-3.  **Tools**: Simple Python functions in `src/smith/tools`. Adding a new tool is as easy as writing a function!
-
 ### CLI Commands
-Once you run `smith`, you have access to these commands:
-- `/help` - Show available commands
-- `/tools` - List all available tools
+
+- `/help` - Display available commands
+- `/tools` - List all registered tools
 - `/trace` - Show execution trace of last run
 - `/dag` - Export last execution DAG as JSON
-- `/inspect` - Show ASCII flowchart of DAG and trace
+- `/inspect` - Display ASCII flowchart of DAG and trace
 - `/history` - Show conversation history
-- `/export` - Export session to markdown file
-- `/clear` - Clear the screen
+- `/export` - Export session to markdown
+- `/clear` - Clear screen
 - `/quit` or `/exit` - Exit Smith
 
-## 🧪 Development & Testing
-We keep it simple!
-- **Run Tests**: `pytest` - Tests verify LLM caller works and orchestrator loads
-- **Lint Code**: `ruff check .`
-- **Format Code**: `black .`
+---
 
-Our test suite is intentionally minimal, focusing on:
-1. **LLM Caller** - Verifies the LLM can be called successfully
-2. **Orchestrator Loading** - Ensures the orchestrator imports and initializes without errors
+## Available Tools
 
-## 📂 Project Structure
-```
-project-smith/
-├── src/smith/           # Core engine code
-│   ├── core/           # Orchestrator and core logic
-│   ├── tools/          # Available tools (LLM, Finance, Google Search, etc.)
-│   ├── cli/            # CLI interface
-│   ├── planner.py      # DAG planning logic
-│   ├── registry.py     # Tool registry
-│   └── tool_loader.py  # Dynamic tool loading
-├── tests/              # Simplified test suite
-├── scripts/            # Helper scripts for testing and debugging
-└── docs/               # Documentation
-```
+Smith includes the following built-in tools:
 
-## 🛠️ Available Tools
-Smith comes with several built-in tools:
-- **LLM Caller** - Access to Llama 3.3 70B via Groq for reasoning and summarization
-- **Finance Fetcher** - Get stock prices and financial data via yfinance
-- **Google Search** - Search the web (requires API key)
-- **News Fetcher** - Fetch latest news articles
-- **Weather Fetcher** - Get weather information
+| Tool | Description | Requirements |
+|------|-------------|--------------|
+| `llm_caller` | LLM reasoning via Groq (Llama 3.3 70B) | GROQ_API_KEY |
+| `finance_fetcher` | Stock prices and financial data | None (uses yfinance) |
+| `google_search` | Web search | GOOGLE_API_KEY, SEARCH_ENGINE_ID |
+| `news_fetcher` | Latest news articles | None |
+| `weather_fetcher` | Weather information | None |
+| `web_scraper` | Extract text from URLs | None |
+| `arxiv_search` | Search academic papers | None |
+| `sub_agent` | Delegate tasks to child agents | None |
 
-Run `/tools` in the CLI to see all available tools.
+Run `/tools` in the CLI for detailed tool information.
 
 ---
-*Built with ❤️ by Karunya Muddana.*
+
+## Development
+
+### Running Tests
+
+```bash
+# Run test suite
+pytest
+
+# Run with coverage
+pytest --cov=smith
+```
+
+### Code Quality
+
+```bash
+# Lint code
+ruff check .
+
+# Format code
+black .
+```
+
+### Project Structure
+
+```
+project-smith/
+├── src/smith/              # Core engine
+│   ├── core/              # Orchestrator, planner, validators
+│   ├── tools/             # Tool implementations
+│   ├── cli/               # Command-line interface
+│   ├── planner.py         # DAG planning logic
+│   ├── registry.py        # Tool registry loader
+│   └── tool_loader.py     # Dynamic tool loading
+├── tests/                 # Test suite
+├── scripts/               # Development scripts
+├── docs/                  # Documentation
+└── pyproject.toml         # Package configuration
+```
+
+---
+
+## Documentation
+
+- [Quickstart Guide](docs/quickstart.md) - Installation and first steps
+- [Architecture Overview](docs/architecture.md) - System design and components
+- [Planner Documentation](docs/planner.md) - DAG planning system
+- [Orchestrator Documentation](docs/orchestrator.md) - Execution engine
+- [Tool Specification](docs/tools-spec.md) - Tool development guide
+- [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
+
+---
+
+## Contributing
+
+Contributions are welcome. Please see [docs/contributing.md](docs/contributing.md) for guidelines.
+
+---
+
+## License
+
+Project Smith is released under the MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+## Author
+
+**Karunya Muddana**  
+BTech Computer Science, AI/ML & MLOps  
+[LinkedIn](https://www.linkedin.com/in/karunya-muddana/)
+
+---
+
+## Acknowledgments
+
+Smith draws conceptual inspiration from compiler pipelines, operating system runtimes, and MLOps safety patterns. All design and implementation are original work.
 

@@ -43,6 +43,13 @@ class SmithConfig(BaseSettings):
     # Environment
     debug_mode: bool = Field(default=False, alias="SMITH_DEBUG")
 
+    # Sub-Agents and Fleet Mode
+    max_subagent_depth: int = Field(default=3, alias="SMITH_MAX_SUBAGENT_DEPTH")
+    max_fleet_size: int = Field(default=5, alias="SMITH_MAX_FLEET_SIZE")
+    tool_lock_timeout: float = Field(default=30.0, alias="SMITH_TOOL_LOCK_TIMEOUT")
+    enable_subagents: bool = Field(default=True, alias="SMITH_ENABLE_SUBAGENTS")
+    enable_fleet_mode: bool = Field(default=True, alias="SMITH_ENABLE_FLEET_MODE")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

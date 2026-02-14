@@ -156,6 +156,32 @@
       "module": "smith.tools.NEWS_CLUSTERER"
     },
     {
+      "name": "sub_agent",
+      "description": "Delegate a complex sub-task to a child Smith agent. Use for parallel research, specialized analysis, or recursive problem decomposition.",
+      "function": "run_sub_agent",
+      "dangerous": false,
+      "domain": "system",
+      "output_type": "synthesis",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "Clear description of the task for the sub-agent to complete"
+          },
+          "max_depth": {
+            "type": "integer",
+            "description": "Maximum recursion depth (optional, default from config)",
+            "default": 3
+          }
+        },
+        "required": [
+          "task"
+        ]
+      },
+      "module": "smith.tools.SUB_AGENT"
+    },
+    {
       "name": "tool_diagnostics",
       "description": "Runs a health check on all installed tools. Detects broken imports, missing functions, or invalid metadata.",
       "function": "run_diagnostics",
@@ -189,6 +215,32 @@
         ]
       },
       "module": "smith.tools.WEATHER_FETCHER"
+    },
+    {
+      "name": "web_scraper",
+      "description": "Fetch and extract text content from any web page URL. Returns the page title and main text content.",
+      "function": "run_web_scraper",
+      "dangerous": false,
+      "domain": "data",
+      "output_type": "factual",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL of the web page to scrape"
+          },
+          "max_length": {
+            "type": "integer",
+            "description": "Maximum length of text to return (default 5000)",
+            "default": 5000
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "module": "smith.tools.WEB_SCRAPER"
     }
   ]
 }
