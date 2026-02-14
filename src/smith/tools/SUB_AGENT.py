@@ -12,7 +12,6 @@ from typing import Optional, Dict, Any
 from smith.core.agent_state import get_state_manager, AgentStatus
 from smith.config import config
 
-
 # Maximum recursion depth for sub-agents
 MAX_SUBAGENT_DEPTH = getattr(config, "max_subagent_depth", 3)
 
@@ -140,7 +139,9 @@ spawn_agent = run_sub_agent
 
 METADATA = {
     "name": "sub_agent",
-    "description": "Delegate a complex sub-task to a child Smith agent. The sub-agent has access to ALL tools (search, finance, weather, etc.) except creating more sub-agents.",
+    "description": (
+        "Delegate a complex sub-task to a child Smith agent. The sub-agent has access to ALL tools (search, finance, weather, etc.) except creating more sub-agents."
+    ),
     "function": "run_sub_agent",
     "dangerous": False,
     "domain": "system",
@@ -150,15 +151,21 @@ METADATA = {
         "properties": {
             "task": {
                 "type": "string",
-                "description": "Clear description of the task for the sub-agent to complete",
+                "description": (
+                    "Clear description of the task for the sub-agent to complete"
+                ),
             },
             "max_depth": {
                 "type": "integer",
-                "description": "Maximum recursion depth (optional, default from config)",
+                "description": (
+                    "Maximum recursion depth (optional, default from config)"
+                ),
                 "default": 3,
             },
         },
         "required": ["task"],
     },
-    "notes": "Sub-agents run a full orchestrator with all tools except sub_agent. Execution is serialized to prevent rate limits.",
+    "notes": (
+        "Sub-agents run a full orchestrator with all tools except sub_agent. Execution is serialized to prevent rate limits."
+    ),
 }

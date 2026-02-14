@@ -94,7 +94,9 @@ fetch_page = run_web_scraper
 
 METADATA = {
     "name": "web_scraper",
-    "description": "Fetch and extract text content from any web page URL. Returns the page title and main text content.",
+    "description": (
+        "Fetch and extract text content from any web page URL. Returns the page title and main text content."
+    ),
     "function": "run_web_scraper",
     "dangerous": False,
     "domain": "data",

@@ -199,7 +199,9 @@ llm_caller = run_llm_tool
 
 METADATA = {
     "name": "llm_caller",
-    "description": "Access a Large Language Model (Llama 3.3 70B via Groq) to summarize text, answer questions, or write code.",
+    "description": (
+        "Access a Large Language Model (Llama 3.3 70B via Groq) to summarize text, answer questions, or write code."
+    ),
     "function": "run_llm_tool",
     "dangerous": False,
     "domain": "reasoning",

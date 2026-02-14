@@ -397,7 +397,9 @@ def _validate_plan(
             if req not in inputs:
                 return {
                     "ok": False,
-                    "error": f"Node {nid}: missing required input '{req}' for tool '{tool}'.",
+                    "error": (
+                        f"Node {nid}: missing required input '{req}' for tool '{tool}'."
+                    ),
                 }
 
         # depends_on: must be array of ids, only existing, and < nid (DAG)
@@ -417,7 +419,9 @@ def _validate_plan(
             if dep >= nid:
                 return {
                     "ok": False,
-                    "error": f"Node {nid}: depends_on id {dep} must be < {nid} to avoid cycles.",
+                    "error": (
+                        f"Node {nid}: depends_on id {dep} must be < {nid} to avoid cycles."
+                    ),
                 }
 
         # retry

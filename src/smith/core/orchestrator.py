@@ -482,7 +482,9 @@ def smith_orchestrator(
                         if not lock_acquired:
                             return {
                                 "status": "error",
-                                "error": f"Could not acquire lock for {_tool_name} (timeout after {lock_timeout}s)",
+                                "error": (
+                                    f"Could not acquire lock for {_tool_name} (timeout after {lock_timeout}s)"
+                                ),
                             }
 
                     try:

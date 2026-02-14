@@ -8,7 +8,6 @@ Enforces tool domain boundaries.
 from typing import Dict, Any
 import re
 
-
 # Domain classifications
 DOMAIN_DATA = "data"
 DOMAIN_REASONING = "reasoning"

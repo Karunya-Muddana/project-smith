@@ -8,7 +8,6 @@ import sys
 import os
 from typing import List, Dict, Any
 
-
 # ===========================================================================
 # DIAGNOSTIC LOGIC
 # ===========================================================================
@@ -93,7 +92,9 @@ tool_diagnostics = run_diagnostics
 
 METADATA = {
     "name": "tool_diagnostics",
-    "description": "Runs a health check on all installed tools. Detects broken imports, missing functions, or invalid metadata.",
+    "description": (
+        "Runs a health check on all installed tools. Detects broken imports, missing functions, or invalid metadata."
+    ),
     "function": "run_diagnostics",
     "dangerous": False,
     "domain": "system",

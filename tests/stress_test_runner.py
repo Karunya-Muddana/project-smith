@@ -20,7 +20,9 @@ TESTS = [
     {
         "id": "test_3_llm_constraint",
         "name": "LLM Constraint Enforcement",
-        "query": "Search AI news, summarize each, cluster them, analyze trends, write a report",
+        "query": (
+            "Search AI news, summarize each, cluster them, analyze trends, write a report"
+        ),
         "expected_tools": ["google_search", "news_clusterer"],
         "max_llm_calls": 3,
     },
@@ -34,7 +36,9 @@ TESTS = [
     {
         "id": "test_5_complex_workflow",
         "name": "Complex Multi-Tool",
-        "query": "Get Seattle weather, search for weather pattern news, and explain any connection",
+        "query": (
+            "Get Seattle weather, search for weather pattern news, and explain any connection"
+        ),
         "expected_tools": ["weather_fetcher", "google_search", "llm_caller"],
         "should_violate": False,
     },

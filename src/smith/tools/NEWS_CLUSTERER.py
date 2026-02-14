@@ -264,7 +264,9 @@ news_clusterer = run_clustering_tool
 
 METADATA = {
     "name": "news_clusterer",
-    "description": "Cluster news articles or text items by semantic similarity. Returns themes, counts, and metrics.",
+    "description": (
+        "Cluster news articles or text items by semantic similarity. Returns themes, counts, and metrics."
+    ),
     "function": "run_clustering_tool",
     "dangerous": False,
     "domain": "computation",

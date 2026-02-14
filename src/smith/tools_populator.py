@@ -11,7 +11,6 @@ import json
 import importlib.util
 import logging
 
-
 # Logging configuration
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("registry_populator")

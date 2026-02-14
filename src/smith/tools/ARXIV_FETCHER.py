@@ -78,7 +78,9 @@ METADATA = {
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Keyword(s) for paper search, e.g. 'transformers', 'reinforcement learning', etc.",
+                "description": (
+                    "Keyword(s) for paper search, e.g. 'transformers', 'reinforcement learning', etc."
+                ),
             },
             "max_results": {
                 "type": "integer",

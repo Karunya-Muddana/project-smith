@@ -133,7 +133,9 @@ weather_fetcher = run_weather_tool
 
 METADATA = {
     "name": "weather_fetcher",
-    "description": "Get the current weather forecast (temperature, condition, wind) for any city globally.",
+    "description": (
+        "Get the current weather forecast (temperature, condition, wind) for any city globally."
+    ),
     "function": "run_weather_tool",
     "dangerous": False,
     "domain": "data",
@@ -143,7 +145,9 @@ METADATA = {
         "properties": {
             "city": {
                 "type": "string",
-                "description": "The name of the city (e.g., 'London', 'Tokyo', 'New York').",
+                "description": (
+                    "The name of the city (e.g., 'London', 'Tokyo', 'New York')."
+                ),
             }
         },
         "required": ["city"],

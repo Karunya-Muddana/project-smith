@@ -117,8 +117,8 @@ class ResourceLockManager:
                     "agent_id": lock_info.agent_id,
                     "acquired_at": lock_info.acquired_at.isoformat(),
                     "duration": (
-                        datetime.now() - lock_info.acquired_at
-                    ).total_seconds(),
+                        (datetime.now() - lock_info.acquired_at).total_seconds()
+                    ),
                 }
             return None
 
