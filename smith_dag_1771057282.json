@@ -1,0 +1,55 @@
+{
+  "status": "success",
+  "nodes": [
+    {
+      "id": 0,
+      "thought": "Fetch 2025 papers on Agentic Runtimes from arXiv",
+      "tool": "arxiv_search",
+      "function": "run_arxiv_search",
+      "inputs": {
+        "query": "Agentic Runtimes",
+        "max_results": 2025
+      },
+      "depends_on": [],
+      "retry": 2,
+      "on_fail": "halt",
+      "timeout": 45,
+      "_normalized_deps": []
+    },
+    {
+      "id": 1,
+      "thought": "Summarize the top 3 papers using sub_agent",
+      "tool": "sub_agent",
+      "function": "run_sub_agent",
+      "inputs": {
+        "task": "Summarize the top 3 papers from arXiv search results"
+      },
+      "depends_on": [
+        0
+      ],
+      "retry": 2,
+      "on_fail": "halt",
+      "timeout": 45,
+      "_normalized_deps": [
+        0
+      ]
+    },
+    {
+      "id": 2,
+      "thought": "Run tool_diagnostics on the sub_agent call",
+      "tool": "tool_diagnostics",
+      "function": "run_diagnostics",
+      "inputs": {},
+      "depends_on": [
+        1
+      ],
+      "retry": 2,
+      "on_fail": "halt",
+      "timeout": 45,
+      "_normalized_deps": [
+        1
+      ]
+    }
+  ],
+  "final_output_node": 2
+}

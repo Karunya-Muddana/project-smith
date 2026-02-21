@@ -46,9 +46,18 @@ Each node in "nodes" represents ONE tool execution.
   "inputs": { <key>: <value> }, // Must match strict schema
   "depends_on": [ <int_ids_of_previous_steps> ],
   "retry": 2,
-  "on_fail": "halt",
+  "on_fail": "continue",
   "timeout": 45
 }
+
+──────────────────── ON_FAIL POLICY ────────────────────
+  "continue" — Default for data-fetching tools (google_search, news_fetcher, finance_fetcher,
+               weather_fetcher, arxiv_search). Downstream nodes still execute even if this
+               node fails. Use when partial results are acceptable.
+  "halt"     — Use ONLY for critical nodes whose output is absolutely required.
+               When a halt-node fails, ALL downstream dependents are skipped.
+               Reserve for: authentication steps, critical data transforms, or
+               nodes where running dependents without this data would be meaningless.
 
 ──────────────────── MULTI-TOOL RULES ────────────────────
 1. IDS MUST be 0-based indices (0, 1, 2...).
@@ -112,6 +121,27 @@ Example missing capabilities:
 ──────────────────── TOOL INPUTS ────────────────────
 DO NOT use placeholders like {{STEPS...}} unless absolutely necessary and supported by the orchestrator.
 Prefer implicit context passing via "depends_on". The orchestrator passes results automatically.
+
+──────────────────── NEWS_FETCHER PIPELINE ────────────────────
+🔥 When the user asks for NEWS ARTICLES, ALWAYS use this exact 2-node pattern:
+
+  Node 0: google_search  (on_fail: "continue")
+    - query: a journalist-style keyword string targeting open news outlets.
+      Append "site:reuters.com OR site:bbc.com OR site:apnews.com OR site:aljazeera.com"
+      to bias results toward open, non-paywalled sources.
+    - num_results: top_n + 3 (to account for paywalled/blocked URLs that return empty bodies).
+      If the user does not specify top_n, default top_n = 5, so num_results = 8.
+    ⚠️  google_search MUST use on_fail: "continue" — news_fetcher has its own
+        NewsAPI fallback and can still produce results even if google_search fails.
+
+  Node 1: news_fetcher  (depends_on: [0], on_fail: "continue")
+    - articles: "{{STEPS.0}}"   ← this passes google_search results as a raw object
+    - raw_query: the ORIGINAL user message (verbatim, NOT the optimized keywords)
+    - fetch_body: true
+
+  ❌ NEVER pass the raw user sentence as the google_search query — always optimize it.
+  ❌ NEVER omit the "articles" input for news_fetcher — it MUST receive "{{STEPS.0}}".
+  ✅ The final node (llm_caller) synthesizes the fetched articles for the user.
 
 ──────────────────── OUTPUT FORMAT ────────────────────
 {

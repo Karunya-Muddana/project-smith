@@ -1,0 +1,52 @@
+﻿python : 
+Impersonate 
+'chrome_124' does 
+not exist, using 
+'random'
+At line:1 char:32
++ ... NG="utf-8"; 
+python -c "from 
+ddgs import DDGS; 
+ddgs = DDGS(); 
+results  ...
++                 ~~
+~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~
+    + CategoryInfo  
+            : NotS  
+  pecified: (Impe   
+ rsonate 'ch...     
+using 'random':    
+String) [], Rem    
+oteException
+    + FullyQualifie 
+   dErrorId : Nati  
+  veCommandError
+ 
+[
+  {
+    "date": "2026-02-17T12:33:00+00:00",
+    "title": "India tops DCC new business list as 18,486 firms join in 2025",
+    "body": "A new analysis by Dubai Chamber of Commerce (DCC), one of the three chambers ope",
+    "url": "https://www.gulftoday.ae/business/2026/02/17/india-tops-dcc-new-business-list-as",
+    "image": "https://www.gulftoday.ae/gulftoday/uploads/images/2026/02/17/1053471.jpg",
+    "source": "Gulf Today"
+  },
+  {
+    "date": "2026-02-18T13:55:00+00:00",
+    "title": "Dubai to Dehradun: Techie wants to quit job and return to India, netizens warn o",
+    "body": "Indian techie in Dubai is considering quitting their job and moving to Dehradun.",
+    "url": "https://www.moneycontrol.com/news/trends/dubai-to-dehradun-techie-wants-to-quit-",
+    "image": "None",
+    "source": "Moneycontrol"
+  },
+  {
+    "date": "2025-04-08T10:15:00+00:00",
+    "title": "Dubai-India ties: Dh17.2 billion investment in India, home to 70,000 Indian busi",
+    "body": "Dubai: As part of the UAE's mission to enhance global partnerships and build bri",
+    "url": "https://www.msn.com/en-gb/money/topstories/dubai-india-ties-dh17-2-billion-inves",
+    "image": "None",
+    "source": "MSN"
+  }
+]

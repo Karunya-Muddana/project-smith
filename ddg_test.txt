@@ -1,0 +1,37 @@
+﻿python : 
+Impersonate 
+'chrome_123' does 
+not exist, using 
+'random'
+At line:1 char:32
++ ... NG="utf-8"; 
+python -c "from src.
+smith.tools.GOOGLE_S
+EARCHER import ru 
+...
++                 ~~
+~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~
+    + CategoryInfo  
+            : NotS  
+  pecified: (Impe   
+ rsonate 'ch...     
+using 'random':    
+String) [], Rem    
+oteException
+    + FullyQualifie 
+   dErrorId : Nati  
+  veCommandError
+ 
+{
+  "status": "success",
+  "engine": "duckduckgo",
+  "query": "Dubai business setup guide Indian entrepreneurs legal requirements 2024",
+  "count": 3,
+  "titles": [
+    "Starting a Business in Dubai: Step-by-Step Legal Guide for ...",
+    "Dubai Business Setup for Indians: The Complete Guide",
+    "Start A Company In UAE From India - 2025 Step-by-Step Guide"
+  ]
+}

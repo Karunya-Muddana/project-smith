@@ -1,0 +1,18 @@
+﻿============================================================
+TEST 1: Wikipedia Lookup
+============================================================
+  Status:     success
+  Title:      Free-trade zone
+  Sections:   10
+  Categories: 10
+  Summary:    A free-trade zone (FTZ) is a class of special economic zone. It is a geographic area where goods may be imported, stored, handled, manufactured, or reconfigured and re-exported under specific customs ...
+
+============================================================
+TEST 2: URL Reader
+============================================================
+  Status:     success
+  Title:      Jebel Ali Free Zone - Wikipedia
+  Length:     5,017 chars
+  Sections:   7
+
+DONE

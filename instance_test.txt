@@ -1,0 +1,12 @@
+﻿429 |  0 results | https://search.sapti.me
+403 |  0 results | https://searx.be
+ERR | ConnectionError      | https://search.bus-hit.me
+429 |  0 results | https://searx.tiekoetter.com
+429 |  0 results | https://search.ononoki.org
+ERR | ConnectionError      | https://searx.oxf.io
+429 |  0 results | https://paulgo.io
+429 |  0 results | https://priv.au
+ERR | JSONDecodeError      | https://searx.work
+ERR | ConnectionError      | https://search.neet.works
+ERR | ConnectTimeout       | https://searxng.ch
+429 |  0 results | https://opnxng.com

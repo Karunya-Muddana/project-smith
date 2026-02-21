@@ -1,0 +1,8 @@
+﻿{
+  "status": "error",
+  "instance": "N/A",
+  "query": "",
+  "count": 0,
+  "error": "All 8 SearXNG instances failed. This is usually temporary \u2014 try again in a few seconds. You can also set SEARXNG_URL in .env to use a self-hosted instance.",
+  "titles": []
+}

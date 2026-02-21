@@ -35,6 +35,9 @@ try:
     from smith.core.validators import validate_tool_authority  # Authority validation
     from smith.core.resource_lock import get_lock_manager  # Resource locking
     from smith.core.agent_state import get_state_manager  # noqa: F401
+    from smith.core.template_engine import resolve_llm_prompt, resolve_step_reference  # P1/P2/P6
+    from smith.core.input_validators import validate_inputs  # P3
+    from smith.core.fabrication_guard import GroundTruthRegistry, check_and_redact  # P4
 except ImportError as e:
     # Fail fast if the package structure is invalid
     sys.stderr.write(
@@ -47,6 +50,7 @@ logger = logging.getLogger("smith.orchestrator")
 
 TRACE_VERSION = "3.0"
 PLACEHOLDER_RE = re.compile(r"\{\{\s*STEPS\.(\d+)\.([^}]+)\}\}", re.IGNORECASE)
+STEP_REF_RE = re.compile(r"^\{\{\s*STEPS\.(\d+)\s*\}\}$", re.IGNORECASE)
 
 # No longer need DB service - using static registry
 
@@ -294,28 +298,10 @@ def smith_orchestrator(
     trace: List[Optional[Dict[str, Any]]] = [None] * len(nodes)
     completed: Set[int] = set()
     submitted: Set[int] = set()
-    futures: Dict[concurrent.futures.Future, int] = {}
+    futures: Dict[concurrent.futures.Future, tuple] = {}
 
     # Rate limiter logic (simple local instance)
     limiter = RateLimiter()
-
-    # Pre-calculate dependencies to fail fast on cycles/errors
-    for idx, node in enumerate(nodes):
-        # Default to sequential if undefined
-        if "depends_on" not in node or node["depends_on"] is None:
-            node["depends_on"] = [idx - 1] if idx > 0 else []
-        elif not isinstance(node["depends_on"], list):
-            node["depends_on"] = []
-
-        # Validate dependencies exist
-        for d in node["depends_on"]:
-            if not isinstance(d, int) or d < 0 or d >= len(nodes):
-                yield {
-                    "type": "error",
-                    "message": f"Step {idx} depends on invalid index {d}",
-                    "run_id": run_id,
-                }
-                return
 
     # 4) Main Parallel Loop ------------------------------------------------
     # 4) Main Parallel Loop ------------------------------------------------
@@ -373,9 +359,20 @@ def smith_orchestrator(
                     continue
 
                 # Check if any upstream dependency failed
-                upstream_error = any(
-                    (trace[d] and trace[d].get("status") != "success") for d in deps
-                )
+                failed_deps = [
+                    d for d in deps
+                    if trace[d] and trace[d].get("status") != "success"
+                ]
+
+                # Determine if any failed dep has on_fail: "halt"
+                # If so, this node must be skipped. If ALL failed deps
+                # have on_fail: "continue", this node can still run.
+                has_halt_failure = False
+                for d in failed_deps:
+                    dep_node = nodes[d]
+                    if dep_node.get("on_fail", "halt") == "halt":
+                        has_halt_failure = True
+                        break
 
                 tool_name = node.get("tool")
                 fn_name = node.get("function")
@@ -395,19 +392,32 @@ def smith_orchestrator(
                     submitted.add(idx)
                     continue
 
-                if upstream_error:
-                    # Skip execution
+                if has_halt_failure:
+                    # Skip execution — a critical upstream dep failed with halt policy
+                    halt_deps = [
+                        d for d in failed_deps
+                        if nodes[d].get("on_fail", "halt") == "halt"
+                    ]
                     logger.warning(
-                        f"Skipping Step {idx} ({tool_name}) due to upstream failure."
+                        f"Skipping Step {idx} ({tool_name}) — upstream node(s) "
+                        f"{halt_deps} failed with on_fail='halt'."
                     )
                     trace[idx] = {
                         "status": "skipped",
-                        "error": "Upstream dependency failed",
+                        "error": f"Upstream dependency failed (halt policy on nodes {halt_deps})",
                         "step_index": idx,
                     }
                     completed.add(idx)
                     submitted.add(idx)
                     continue
+
+                # If we reach here with failed_deps, they all have on_fail: "continue"
+                is_partial = len(failed_deps) > 0
+                if is_partial:
+                    logger.info(
+                        f"Step {idx} ({tool_name}) running with partial upstream — "
+                        f"nodes {failed_deps} failed but had on_fail='continue'."
+                    )
 
                 # --- Authorization (Blocking Check) ---
                 # Check dangerous flag on the main thread to allow synchronous user interaction
@@ -443,11 +453,52 @@ def smith_orchestrator(
                 raw_args = node.get("inputs") or node.get("args") or {}
                 safe_args = dict(raw_args)
 
+                # --- FIX P1/P2/P6: Use template engine for llm_caller prompts ---
                 # Resolving placeholders must be done HERE (main thread) because `trace` is consistent here
                 if tool_name == "llm_caller":
                     p = safe_args.get("prompt", "")
                     if isinstance(p, str):
-                        safe_args["prompt"] = resolve_prompt_placeholders(p, trace)
+                        # Use new template engine: labeled headers, null fallback, budget truncation
+                        safe_args["prompt"] = resolve_llm_prompt(p, trace, nodes)
+
+                # General resolver: replace {{STEPS.N}} references with raw objects for ALL tools
+                for key, value in safe_args.items():
+                    if isinstance(value, str):
+                        m = STEP_REF_RE.match(value.strip())
+                        if m:
+                            # --- FIX P2: Use template engine's resolver with null handling ---
+                            resolved = resolve_step_reference(value, trace)
+                            safe_args[key] = resolved
+
+                # --- FIX P3: Validate upstream input shapes before execution ---
+                input_validation = validate_inputs(tool_name, safe_args)
+                if not input_validation.get("valid", True):
+                    reason = input_validation.get("reason", "invalid_input")
+                    logger.warning(
+                        f"Input validation failed for Step {idx} ({tool_name}): {reason}"
+                    )
+                    on_fail_policy = node.get("on_fail", "halt")
+                    trace[idx] = {
+                        "status": "error",
+                        "error": reason,
+                        "step_index": idx,
+                        "tool": tool_name,
+                        "duration": 0.0,
+                    }
+                    completed.add(idx)
+                    submitted.add(idx)
+                    yield {
+                        "type": "step_complete",
+                        "step_index": idx,
+                        "tool": tool_name,
+                        "function": fn_name,
+                        "status": "error",
+                        "payload": {"status": "error", "error": reason},
+                        "run_id": run_id,
+                        "step_id": step_id,
+                        "duration": 0.0,
+                    }
+                    continue
 
                 yield {
                     "type": "debug_args",
@@ -522,6 +573,9 @@ def smith_orchestrator(
                 # Get current agent ID (or use run_id as fallback)
                 agent_id = getattr(config, "_current_agent_id", run_id)
 
+                # --- FIX P5: Record start_time for real duration tracking ---
+                node_start_time = time.perf_counter()
+
                 # Submit to ThreadPool with resource locking
                 fut = executor.submit(
                     _run_node_logic,
@@ -533,7 +587,7 @@ def smith_orchestrator(
                     tool_name,
                     agent_id,
                 )
-                futures[fut] = idx
+                futures[fut] = (idx, meta, safe_args, node_start_time)
                 submitted.add(idx)
 
             # --- B. Wait for Next Completion ---
@@ -553,9 +607,13 @@ def smith_orchestrator(
             )
 
             for fut in done:
-                f_idx = futures.pop(fut)
+                f_idx, f_meta, f_args, f_start_time = futures.pop(fut)
                 f_node = nodes[f_idx]
                 f_tool = f_node.get("tool")
+
+                # --- FIX P5: Calculate real duration ---
+                f_end_time = time.perf_counter()
+                duration_seconds = round(f_end_time - f_start_time, 3)
 
                 try:
                     result_payload = fut.result()
@@ -568,7 +626,7 @@ def smith_orchestrator(
 
                 # Validate tool authority
                 validation_result = validate_tool_authority(
-                    meta, safe_args, result_payload
+                    f_meta, f_args, result_payload
                 )
                 quality = validation_result.get("quality", "unknown")
                 violations = validation_result.get("violations", [])
@@ -578,11 +636,7 @@ def smith_orchestrator(
                     for violation in violations:
                         logger.warning(f"Authority violation detected: {violation}")
 
-                # Calculate duration (approximate, since we don't have start time in future easily without wrapper)
-                # We'll omit duration in trace for now or add start_time to futures map.
-                # Simplification: duration=0 or track locally.
-
-                # Update Trace with quality score
+                # Update Trace with quality score and real duration
                 trace_entry = {
                     "step_index": f_idx,
                     "tool": f_node.get("tool"),
@@ -591,7 +645,7 @@ def smith_orchestrator(
                     "quality": quality,  # Authority quality score
                     "violations": violations if violations else None,
                     "result": result_payload,
-                    "duration": 0.0,  # Placeholder
+                    "duration": duration_seconds,  # FIX P5: Real wall-clock duration
                 }
                 trace[f_idx] = trace_entry
                 completed.add(f_idx)
@@ -607,7 +661,7 @@ def smith_orchestrator(
                     "payload": result_payload,
                     "run_id": run_id,
                     "step_id": f"{run_id}-step-{f_idx}",
-                    "duration": 0.0,
+                    "duration": duration_seconds,  # FIX P5: Real wall-clock duration
                 }
 
     # 4) Final synthesis from trace ----------------------------------------
@@ -632,17 +686,55 @@ def smith_orchestrator(
         if len(ctx_str) > config.trace_limit_chars:
             ctx_str = ctx_str[: config.trace_limit_chars] + "...[TRUNCATED]"
 
+        # Build partial-failure context for the final synthesizer
+        succeeded = [t for t in compact_trace if t.get("status") == "success"]
+        failed    = [t for t in compact_trace if t.get("status") == "error"]
+        skipped   = [t for t in compact_trace if t.get("status") == "skipped"]
+
+        failure_ctx = ""
+        if failed or skipped:
+            failure_ctx = "\nExecution Notes:\n"
+            if failed:
+                failure_ctx += f"- {len(failed)} step(s) FAILED: {[f'{t.get("tool")} (step {t.get("step_index")})' for t in failed]}\n"
+            if skipped:
+                failure_ctx += f"- {len(skipped)} step(s) SKIPPED due to upstream failures\n"
+            if succeeded:
+                failure_ctx += f"- {len(succeeded)} step(s) SUCCEEDED — use their data to answer\n"
+            else:
+                failure_ctx += "- NO steps succeeded. Explain what went wrong.\n"
+
         final_prompt = (
             f"User Request: {user_msg}\n\n"
             f"Execution Trace (machine readable JSON):\n{ctx_str}\n\n"
+            f"{failure_ctx}\n"
             "INSTRUCTIONS:\n"
-            "1. Answer ONLY using information present in the trace.\n"
-            "2. If something is missing or a tool failed, say that explicitly.\n"
-            "3. Do not invent URLs, numbers, or tools that are not present.\n"
+            "1. Answer using information present in the trace. Prioritize data from successful steps.\n"
+            "2. If some tools failed but others succeeded, synthesize the best answer from available data.\n"
+            "3. If ALL tools failed, explain what went wrong concisely.\n"
+            "4. Do not invent URLs, numbers, or tools that are not present.\n"
         )
 
         model = config.primary_model
         final = LLM_CALLER.call_llm(final_prompt, model=model)
+
+        # --- FIX P4: Fabrication guard enforcement ---
+        # Build ground truth registry from data tool results
+        gt_registry = GroundTruthRegistry()
+        gt_registry.register_from_trace(trace)
+
+        # Check and redact fabrications in the final response
+        if final.get("status") == "success" and final.get("response"):
+            guard_result = check_and_redact(final["response"], gt_registry)
+            final["response"] = guard_result["redacted_text"]
+            final["fabrication_report"] = guard_result["fabrication_report"]
+            if guard_result["confidence"] == "low_confidence":
+                final["confidence"] = "low_confidence"
+                final["confidence_warning"] = (
+                    "⚠️ More than 30% of numeric claims could not be verified "
+                    "against upstream tool results. Please verify manually."
+                )
+                logger.warning("Final output marked as low_confidence due to fabrication rate")
+
         yield {"type": "final_answer", "payload": final, "run_id": run_id}
 
     except Exception as e:

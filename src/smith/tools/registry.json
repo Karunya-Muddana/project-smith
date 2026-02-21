@@ -62,7 +62,7 @@
     },
     {
       "name": "google_search",
-      "description": "Search Google for real-time information, news, or facts.",
+      "description": "Search the web for real-time information, news, or facts. Uses DuckDuckGo as primary search engine — no API key needed. Includes an internal LLM query optimizer (llama-3.1-8b-instant) that automatically rewrites vague or natural-language queries into precise search strings. Pass raw user intent directly.",
       "function": "run_google_search",
       "dangerous": false,
       "domain": "data",
@@ -72,12 +72,14 @@
         "properties": {
           "query": {
             "type": "string",
-            "description": "The search keywords."
+            "description": "The search query. Can be raw natural language — the internal optimizer will convert it into a precise search string."
           },
           "num_results": {
             "type": "integer",
-            "description": "Number of results to return (default 3).",
-            "default": 3
+            "description": "Number of results to return (1-20, default 10).",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 20
           }
         },
         "required": [
@@ -116,44 +118,43 @@
       "module": "smith.tools.LLM_CALLER"
     },
     {
-      "name": "news_clusterer",
-      "description": "Cluster news articles or text items by semantic similarity. Returns themes, counts, and metrics.",
-      "function": "run_clustering_tool",
+      "name": "news_fetcher",
+      "description": "Fetches top N news articles with body text. Uses DuckDuckGo News as primary source — no API key needed. Falls back to upstream google_search results if DDG fails. Bodies are fetched via requests + BeautifulSoup. If body fetch fails, articles are returned with snippet text instead (never errors if articles exist). Pass raw_query for keyword optimization.",
+      "function": "run_news_fetcher",
       "dangerous": false,
-      "domain": "computation",
+      "domain": "data_retrieval",
       "output_type": "structured",
       "parameters": {
         "type": "object",
         "properties": {
           "articles": {
             "type": "array",
+            "description": "Upstream google_search output ({{STEPS.N}}). Only used as fallback if DuckDuckGo News returns no results.",
             "items": {
-              "type": "object",
-              "properties": {
-                "title": {
-                  "type": "string"
-                },
-                "content": {
-                  "type": "string"
-                },
-                "snippet": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "List of articles to cluster"
+              "type": "object"
+            }
           },
-          "similarity_threshold": {
-            "type": "number",
-            "default": 0.3,
-            "description": "Minimum similarity (0-1) to group items together"
+          "raw_query": {
+            "type": "string",
+            "default": "",
+            "description": "Original user query. Fed into keyword optimizer sub-model."
+          },
+          "top_n": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 20,
+            "description": "Number of articles to return."
+          },
+          "fetch_body": {
+            "type": "boolean",
+            "default": true,
+            "description": "Fetch full body text. Set false for snippet-only mode."
           }
         },
-        "required": [
-          "articles"
-        ]
+        "required": []
       },
-      "module": "smith.tools.NEWS_CLUSTERER"
+      "module": "smith.tools.NEWS_FETCHER"
     },
     {
       "name": "sub_agent",
@@ -241,6 +242,58 @@
         ]
       },
       "module": "smith.tools.WEB_SCRAPER"
+    },
+    {
+      "name": "wikipedia_lookup",
+      "description": "Look up a topic on Wikipedia. Returns a structured summary, top-level sections with text, categories, and page URL. Useful for background context, definitions, or factual overviews to complement search/news results. No API key needed.",
+      "function": "run_wikipedia_lookup",
+      "dangerous": false,
+      "domain": "data",
+      "output_type": "factual",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The topic to look up. Use proper nouns for best results."
+          },
+          "language": {
+            "type": "string",
+            "description": "Wikipedia language code (default 'en').",
+            "default": "en"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "module": "smith.tools.WIKIPEDIA_LOOKUP"
+    },
+    {
+      "name": "url_reader",
+      "description": "Fetch and extract structured text from any web page URL. Returns page title, content organized by headings, and full text. Use after google_search to deep-read a specific result. Handles article extraction with smart fallbacks. Skips paywalled sites. No API key needed.",
+      "function": "run_url_reader",
+      "dangerous": false,
+      "domain": "data",
+      "output_type": "factual",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL to read. Must be a valid HTTP/HTTPS URL."
+          },
+          "max_length": {
+            "type": "integer",
+            "description": "Max content length in chars (default 10000, max 50000).",
+            "default": 10000
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "module": "smith.tools.URL_READER"
     }
   ]
 }

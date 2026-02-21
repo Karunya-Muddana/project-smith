@@ -1,0 +1,17 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-9.0.2, pluggy-1.6.0
+rootdir: C:\Users\karun\OneDrive\Desktop\Smith\project-smith
+configfile: pyproject.toml
+plugins: anyio-4.12.0, cov-7.0.0
+collected 10 items
+
+tests\test_orchestrator_loads.py .....                                   [ 50%]
+tests\test_dag_failure_handling.py .....                                 [100%]
+
+============================== warnings summary ===============================
+tests/test_orchestrator_loads.py::test_orchestrator_imports
+  C:\Users\karun\OneDrive\Desktop\Smith\project-smith\src\smith\config.py:5: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class SmithConfig(BaseSettings):
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 10 passed, 1 warning in 0.62s ========================
