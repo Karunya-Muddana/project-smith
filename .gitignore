@@ -3,6 +3,19 @@ __pycache__/
 *.pyc
 .env
 *.log
+
+# Runtime / output directories
+.smith_runs/
+.smith_gmail/
+
+# Scratch and test output files
+*.txt
+!readme*.txt
+!README*.txt
+
+# Node (web frontend lives in web/)
+node_modules/
+package-lock.json
 *.db
 agent_db.json
 mongo-init.js

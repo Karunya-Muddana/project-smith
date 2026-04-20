@@ -29,6 +29,110 @@
       "module": "smith.tools.ARXIV_FETCHER"
     },
     {
+      "name": "code_agent",
+      "description": "Full agentic code generation pipeline. Searches real docs and Stack Overflow, generates code that incorporates what it finds, then self-reviews and iterates to fix issues before returning. Use this for any serious coding task. Much higher quality than code_assistant for complex, multi-requirement tasks.",
+      "function": "run_code_agent",
+      "dangerous": false,
+      "domain": "reasoning",
+      "output_type": "code",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "Full description of what to build. Include: exact libraries, all constraints, quality requirements (async, typed, PR-ready, etc.). Be exhaustive — this is processed by an agentic pipeline, not a prompt."
+          },
+          "language": {
+            "type": "string",
+            "default": "python",
+            "description": "Target programming language."
+          },
+          "skip_search": {
+            "type": "boolean",
+            "default": false,
+            "description": "Set true to skip web research (faster, no docs context)."
+          }
+        },
+        "required": [
+          "task"
+        ]
+      },
+      "module": "smith.tools.CODE_AGENT"
+    },
+    {
+      "name": "code_assistant",
+      "description": "LLM-powered coding assistant. Use operation='generate' to write new code, 'explain' to understand existing code, 'fix' to repair bugs, 'review' to get a code review. Always wraps output in syntax-highlighted blocks.",
+      "function": "run_code_assistant",
+      "dangerous": false,
+      "domain": "reasoning",
+      "output_type": "code",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "generate",
+              "explain",
+              "fix",
+              "review"
+            ],
+            "description": "What to do: generate new code, explain existing code, fix bugs, or do a code review."
+          },
+          "task": {
+            "type": "string",
+            "description": "Description of what the code should do (required for generate/fix)."
+          },
+          "language": {
+            "type": "string",
+            "default": "python",
+            "description": "Programming language (e.g. python, javascript, rust, sql)."
+          },
+          "code": {
+            "type": "string",
+            "description": "Existing code (required for explain, fix, review)."
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "module": "smith.tools.CODE_ASSISTANT"
+    },
+    {
+      "name": "crypto_fetcher",
+      "description": "Fetch live cryptocurrency prices and market data via CoinGecko. Use operation='search' to find a coin ID by name/symbol, or operation='price' to get the live USD price for it.",
+      "function": "run_crypto_fetcher",
+      "dangerous": false,
+      "domain": "data",
+      "output_type": "numeric",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "search",
+              "price"
+            ],
+            "description": "Whether to search for a coin or get its price."
+          },
+          "query": {
+            "type": "string",
+            "description": "Search term or symbol if operation='search'"
+          },
+          "coin_id": {
+            "type": "string",
+            "description": "The exact coin ID (e.g. 'bitcoin', 'ethereum') if operation='price'"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "module": "smith.tools.CRYPTO_FETCHER"
+    },
+    {
       "name": "finance_fetcher",
       "description": "Get stock data. Use operation='price' for current value.",
       "function": "run_finance_tool",
@@ -61,8 +165,70 @@
       "module": "smith.tools.FINANCE"
     },
     {
+      "name": "financial_calculator",
+      "description": "Calculate financial ratios (CAGR, PE Premium, DCF validation). Pure math, no API required.",
+      "function": "run_financial_calculator",
+      "dangerous": false,
+      "domain": "computation",
+      "output_type": "numeric",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "cagr",
+              "pe_premium",
+              "dcf"
+            ],
+            "description": "The math operation to perform."
+          },
+          "start_value": {
+            "type": "number",
+            "description": "start value for CAGR"
+          },
+          "end_value": {
+            "type": "number",
+            "description": "end value for CAGR"
+          },
+          "years": {
+            "type": "number",
+            "description": "years for CAGR or DCF"
+          },
+          "pe_a": {
+            "type": "number",
+            "description": "PE of asset A for pe_premium"
+          },
+          "pe_b": {
+            "type": "number",
+            "description": "PE of base asset B for pe_premium"
+          },
+          "free_cash_flow": {
+            "type": "number",
+            "description": "starting FCF for DCF"
+          },
+          "growth_rate_percent": {
+            "type": "number",
+            "description": "annual growth percent for DCF"
+          },
+          "discount_rate_percent": {
+            "type": "number",
+            "description": "discount rate percent for DCF"
+          },
+          "terminal_multiple": {
+            "type": "number",
+            "description": "exit multiple for DCF"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "module": "smith.tools.FINANCIAL_CALCULATOR"
+    },
+    {
       "name": "google_search",
-      "description": "Search the web for real-time information, news, or facts. Uses DuckDuckGo as primary search engine — no API key needed. Includes an internal LLM query optimizer (llama-3.1-8b-instant) that automatically rewrites vague or natural-language queries into precise search strings. Pass raw user intent directly.",
+      "description": "Search the web for real-time information, news, or facts. Uses DuckDuckGo as primary search engine — no API key needed. Optionally falls back to a self-hosted SearXNG instance if SEARXNG_URL is set in .env. Includes an internal LLM query optimizer (llama-3.1-8b-instant) that automatically rewrites vague or natural-language queries into precise search strings. Pass raw user intent directly. Automatically fetches and extracts the full page text of the top 3 results by default, providing deep research context instead of just short snippets.",
       "function": "run_google_search",
       "dangerous": false,
       "domain": "data",
@@ -76,10 +242,15 @@
           },
           "num_results": {
             "type": "integer",
-            "description": "Number of results to return (1-20, default 10).",
+            "description": "Number of results to return (1–20, default 10).",
             "default": 10,
             "minimum": 1,
             "maximum": 20
+          },
+          "fetch_webpages": {
+            "type": "boolean",
+            "description": "If True, auto-fetches the full page text for the top 3 results for deeper context. Default True.",
+            "default": true
           }
         },
         "required": [
@@ -119,7 +290,7 @@
     },
     {
       "name": "news_fetcher",
-      "description": "Fetches top N news articles with body text. Uses DuckDuckGo News as primary source — no API key needed. Falls back to upstream google_search results if DDG fails. Bodies are fetched via requests + BeautifulSoup. If body fetch fails, articles are returned with snippet text instead (never errors if articles exist). Pass raw_query for keyword optimization.",
+      "description": "Fetches top N news articles with body text. Uses DuckDuckGo News as the primary source — no API key needed. Falls back to upstream google_search results if DDG fails. Bodies are fetched via requests + BeautifulSoup (no external APIs). If body fetch fails, articles are returned with snippet text instead (never errors if articles exist). Pass the original user request as raw_query for keyword optimization.",
       "function": "run_news_fetcher",
       "dangerous": false,
       "domain": "data_retrieval",
@@ -149,7 +320,7 @@
           "fetch_body": {
             "type": "boolean",
             "default": true,
-            "description": "Fetch full body text. Set false for snippet-only mode."
+            "description": "Fetch full body text. Set False for snippet-only mode."
           }
         },
         "required": []
@@ -157,8 +328,44 @@
       "module": "smith.tools.NEWS_FETCHER"
     },
     {
+      "name": "sec_filings",
+      "description": "Fetch the latest SEC EDGAR filings (10-K, 10-Q, 8-K) and their URLs for a given stock ticker. Completely free.",
+      "function": "run_sec_filings_fetcher",
+      "dangerous": false,
+      "domain": "data",
+      "output_type": "factual",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "description": "Stock ticker symbol (e.g. AAPL, MSFT)"
+          },
+          "form_type": {
+            "type": "string",
+            "enum": [
+              "10-K",
+              "10-Q",
+              "8-K"
+            ],
+            "description": "Type of filing to retrieve",
+            "default": "10-K"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of filings to return",
+            "default": 3
+          }
+        },
+        "required": [
+          "ticker"
+        ]
+      },
+      "module": "smith.tools.SEC_FILINGS"
+    },
+    {
       "name": "sub_agent",
-      "description": "Delegate a complex sub-task to a child Smith agent. Use for parallel research, specialized analysis, or recursive problem decomposition.",
+      "description": "Delegate a complex sub-task to a child Smith agent. The sub-agent has access to ALL tools (search, finance, weather, etc.) except creating more sub-agents.",
       "function": "run_sub_agent",
       "dangerous": false,
       "domain": "system",
@@ -180,7 +387,42 @@
           "task"
         ]
       },
+      "notes": "Sub-agents run a full orchestrator with all tools except sub_agent. Execution is serialized to prevent rate limits.",
       "module": "smith.tools.SUB_AGENT"
+    },
+    {
+      "name": "technical_indicators",
+      "description": "Calculate stock technical indicators (RSI, MACD, SMA) and determine current trend signals.",
+      "function": "run_technical_analysis",
+      "dangerous": false,
+      "domain": "data",
+      "output_type": "structured",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "description": "Stock ticker symbol (e.g. AAPL, NVDA)"
+          },
+          "period": {
+            "type": "string",
+            "enum": [
+              "1mo",
+              "3mo",
+              "6mo",
+              "1y",
+              "2y",
+              "5y"
+            ],
+            "default": "6mo",
+            "description": "Time period to fetch data for (needed for 200 SMA)"
+          }
+        },
+        "required": [
+          "ticker"
+        ]
+      },
+      "module": "smith.tools.TECHNICAL_INDICATORS"
     },
     {
       "name": "tool_diagnostics",
@@ -195,6 +437,32 @@
         "required": []
       },
       "module": "smith.tools.TOOL_DIAGNOSTICS"
+    },
+    {
+      "name": "url_reader",
+      "description": "Fetch and extract structured text from any web page URL. Returns the page title, content organized by headings (sections), and full text. Use after google_search to deep-read a specific result. Handles article extraction with smart fallbacks. Skips paywalled sites automatically. No API key needed.",
+      "function": "run_url_reader",
+      "dangerous": false,
+      "domain": "data",
+      "output_type": "factual",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL to read. Must be a valid HTTP/HTTPS URL."
+          },
+          "max_length": {
+            "type": "integer",
+            "description": "Max content length in chars (default 10000, max 50000).",
+            "default": 10000
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "module": "smith.tools.URL_READER"
     },
     {
       "name": "weather_fetcher",
@@ -255,7 +523,7 @@
         "properties": {
           "query": {
             "type": "string",
-            "description": "The topic to look up. Use proper nouns for best results."
+            "description": "The topic to look up. Use proper nouns and specific terms for best results (e.g. 'Dubai', 'Free trade zone', 'Companies Act India')."
           },
           "language": {
             "type": "string",
@@ -270,30 +538,80 @@
       "module": "smith.tools.WIKIPEDIA_LOOKUP"
     },
     {
-      "name": "url_reader",
-      "description": "Fetch and extract structured text from any web page URL. Returns page title, content organized by headings, and full text. Use after google_search to deep-read a specific result. Handles article extraction with smart fallbacks. Skips paywalled sites. No API key needed.",
-      "function": "run_url_reader",
-      "dangerous": false,
-      "domain": "data",
-      "output_type": "factual",
+      "name": "gmail",
+      "description": "Gmail integration: read inbox, read full email body, send emails, reply to threads, forward, star, mark read/unread, trash, and search using Gmail query syntax (e.g. 'from:boss@co.com is:unread'). Requires one-time OAuth2 browser authorization. Use message_id from read_inbox results to reference specific emails.",
+      "function": "run_gmail_tool",
+      "dangerous": true,
+      "domain": "communication",
+      "output_type": "structured",
       "parameters": {
         "type": "object",
         "properties": {
-          "url": {
+          "operation": {
             "type": "string",
-            "description": "The URL to read. Must be a valid HTTP/HTTPS URL."
+            "description": "One of: read_inbox, read_email, send_email, reply, forward, star, mark_read, trash, search, list_labels",
+            "enum": [
+              "read_inbox",
+              "read_email",
+              "send_email",
+              "reply",
+              "forward",
+              "star",
+              "mark_read",
+              "trash",
+              "search",
+              "list_labels"
+            ]
           },
-          "max_length": {
+          "to": {
+            "type": "string",
+            "description": "Recipient email (for send_email, forward)"
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject (for send_email)"
+          },
+          "body": {
+            "type": "string",
+            "description": "Body text (for send_email, reply)"
+          },
+          "message_id": {
+            "type": "string",
+            "description": "Gmail message ID from read_inbox results"
+          },
+          "query": {
+            "type": "string",
+            "description": "Gmail search query e.g. 'from:user@example.com is:unread'"
+          },
+          "max_results": {
             "type": "integer",
-            "description": "Max content length in chars (default 10000, max 50000).",
-            "default": 10000
+            "default": 10,
+            "description": "Max emails to return"
+          },
+          "label": {
+            "type": "string",
+            "default": "INBOX",
+            "description": "Gmail label (INBOX, SENT, DRAFTS, SPAM)"
+          },
+          "star": {
+            "type": "boolean",
+            "description": "True=star, False=unstar"
+          },
+          "mark_read": {
+            "type": "boolean",
+            "description": "True=mark read, False=mark unread"
+          },
+          "note": {
+            "type": "string",
+            "default": "",
+            "description": "Note prepended when forwarding"
           }
         },
         "required": [
-          "url"
+          "operation"
         ]
       },
-      "module": "smith.tools.URL_READER"
+      "module": "smith.tools.GMAIL"
     }
   ]
 }

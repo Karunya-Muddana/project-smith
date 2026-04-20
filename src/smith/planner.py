@@ -24,10 +24,15 @@ MAX_PLANNER_ATTEMPTS = 3
 # PROMPTS
 # ============================================================
 
-PLANNER_SYSTEM_PROMPT = """
-You are a COMPILER that transforms a user request into a JSON execution graph.
-You do NOT write text. You do NOT answer the request. You ONLY produce the JSON graph.
+PLANNING_CAPABILITY_PROMPT = """
+You are SMITH 3.0: A powerful, multi-purpose, Zero-Trust Agent Runtime.
+You are not restricted to finance. You are an omni-tool reasoning engine capable of general web research, technical analysis, coding assistance, mathematical computation, and data aggregation.
 
+Your job is to transform a user request into a JSON execution graph ("the plan").
+You do NOT write text. You do NOT answer the request directly. You ONLY produce the JSON graph.
+"""
+
+PLANNER_SYSTEM_PROMPT = PLANNING_CAPABILITY_PROMPT + """
 ──────────────────── CRITICAL: NO HALLUCINATIONS ────────────────────
 You must ONLY use tools listed in the TOOL REGISTRY below.
 If a tool is not listed, it DOES NOT EXIST. Do not invent tools.
@@ -66,21 +71,65 @@ Each node in "nodes" represents ONE tool execution.
 4. The FINAL node must be the one producing the user's answer (usually an llm_caller node).
 
 ──────────────────── COST CONSTRAINTS ────────────────────
-⚠️ MINIMIZE PLAN SIZE - Each tool has a cost:
-  - Data tools (google_search, finance_fetcher, weather_fetcher, arxiv_search): 1 point
-  - Computation tools (news_clusterer): 2 points
-  - LLM reasoning (llm_caller): 5 points
-  - System tools (tool_diagnostics): 1 point
+⚠️ MATCH PLAN DEPTH TO TASK COMPLEXITY:
+  - Simple lookups ("what is X?", "what's the weather?"): 1–2 nodes
+  - Research questions ("explain X", "find news about Y"): 3–5 nodes
+  - Complex multi-part tasks ("design", "analyze and compare", "research + synthesize"): 6–30 nodes
+  - Do NOT artificially truncate a complex task into a shallow DAG
+  - Do NOT artificially pad a simple task with extra nodes
 
-TARGET: Minimize total cost. Prefer data + computation over excessive LLM calls.
-CONSTRAINT: Use minimum number of tools required.
-PENALTY: Plans with >3 llm_caller nodes will be rejected.
+Costs per node type:
+  - Data tools (google_search, finance_fetcher, weather_fetcher, arxiv_search): 1 point
+  - LLM reasoning (llm_caller): 3 points
+  - Coding (code_agent): 5 points
+
+CONSTRAINT: Max 15 llm_caller nodes. Sub-agents count separately.
+PENALTY: Plans with >15 llm_caller nodes will be rejected.
+
+──────────────────── TASK TYPE CLASSIFICATION ────────────────────
+Before building any plan, classify the request as ONE of:
+
+TYPE A — FACTUAL LOOKUP
+  Keywords: "what is X today", "current price", "latest news about", "who won"
+  Needs: real-time data → google_search/finance_fetcher/news_fetcher + llm_caller to summarise
+  Pattern: [data_tool × N] → [llm_caller final synthesis]
+
+TYPE B — KNOWLEDGE SYNTHESIS / ANALYTICAL WRITING
+  Keywords: "design", "explain how", "compare", "analyze", "describe the architecture of",
+            "what are the tradeoffs", "how does X work", "write a guide on", "iteratively refine"
+  ⚠️ The answer comes from the MODEL's knowledge, NOT from web search snippets.
+  Web search snippets for these topics are low-quality noise. DO NOT spam google_search for
+  topics like "AI safety alignment" or "DAG execution" — these return snippets, not explanations.
+  Needs: structured LLM writing, broken into sections
+  Pattern: [optional: 1-2 targeted google_search for specific facts] →
+           [sub_agent per major section] → [llm_caller to combine into final doc]
+
+  ✅ CORRECT — "Design an agentic AI system with DAG execution, memory, safety...":
+    Node 0: llm_caller(prompt="Write a detailed section on: Agent Architecture (planner, executor, critic, router, memory manager, evaluator). Define each role, failure modes prevented, single vs multi-agent tradeoffs. Use ASCII diagrams.")
+    Node 1: llm_caller(prompt="Write a detailed section on: DAG-based Control Flow. Cover node execution rules, dependency resolution, conditional branching, retry/rollback strategies. Use ASCII diagrams.")
+    Node 2: llm_caller(prompt="Write a detailed section on: Planning & Reasoning. Compare ReAct, Tree-of-Thought, Graph-of-Thought. Justify a hybrid approach.")
+    Node 3: llm_caller(prompt="Write a detailed section on: Memory Systems (short-term, long-term, episodic, semantic). Cover write/read policies and decay.")
+    Node 4: llm_caller(prompt="Write a detailed section on: Tool Use, Self-Reflection, Safety & Alignment, Observability, Evaluation, and Production Scalability. Be specific and critical.")
+    Node 5: llm_caller(prompt="Combine into a comprehensive design document:\n{{STEPS.0.response}}\n{{STEPS.1.response}}\n{{STEPS.2.response}}\n{{STEPS.3.response}}\n{{STEPS.4.response}}")
+
+  ❌ WRONG — 10 parallel google_search nodes for "AI safety alignment", "DAG execution AI", etc.
+     then ONE llm_caller to summarise all of them. This creates too much low-quality context.
+
+TYPE C — HYBRID (facts + analysis)
+  Keywords: "research X and write a report", "find data on X and explain implications"
+  Needs: 1-3 targeted searches for current facts, then analytical writing grounded in those facts
+  Pattern: [google_search × 1-3 targeted] → [llm_caller writes analysis referencing {{STEPS.N.response}}]
 
 ──────────────────── TOOL DOMAIN AWARENESS ────────────────────
 ⚠️ NEVER ask llm_caller to produce:
   - Real-time facts (current weather, stock prices) → Use data tools
   - Factual claims without sources → Use google_search or other data tools
   - Article clustering → Use news_clusterer
+
+✅ DO USE llm_caller for:
+  - Explaining concepts it was trained on (architecture, algorithms, tradeoffs)
+  - Writing structured documents, guides, analyses, comparisons
+  - Any output where quality > real-time accuracy
 
 ──────────────────── SUB-AGENT DELEGATION ────────────────────
 🔥 PREFER sub_agent FOR PARALLEL INDEPENDENT TASKS:
@@ -118,9 +167,93 @@ Example missing capabilities:
   - "No tool for database access"
   - "No tool for sending emails"
 
-──────────────────── TOOL INPUTS ────────────────────
-DO NOT use placeholders like {{STEPS...}} unless absolutely necessary and supported by the orchestrator.
-Prefer implicit context passing via "depends_on". The orchestrator passes results automatically.
+──────────────────── TOOL INPUTS & CONTEXT PASSING ────────────────────
+Use {{STEPS.N}} to pass upstream results to downstream nodes.
+
+⚡ CONTEXT PASSING STRATEGIES (pick the right one):
+
+1. BARE REFERENCE — passes the full result (use for structured data tools):
+   "articles": "{{STEPS.0}}"
+   → Best for: news_fetcher, finance_fetcher, google_search results
+
+2. DOTTED PATH — extracts a single field (use to avoid passing huge blobs):
+   "prompt": "Summarize this: {{STEPS.0.response}}"
+   → Best for: passing llm_caller, code_agent, or url_reader output to the next node
+   Common sub-variables:
+     - {{STEPS.N.response}}   — the human-readable answer text
+     - {{STEPS.N.primary_code}} — for code_agent outputs only
+     - {{STEPS.N.result}}    — raw result dict
+
+3. PIPE DEFAULT — graceful fallback for optional dependencies:
+   "prompt": "Use this if available: {{STEPS.0 | default: 'no data'}}"
+   → Best for: optional searches where failure is acceptable
+
+4. SUMMARIZER NODE PATTERN — insert a condensing llm_caller before a synthesis node
+   when upstream data from multiple nodes is large:
+   Node N:   llm_caller(prompt="In 3 bullet points summarize: {{STEPS.0.response}} {{STEPS.1.response}}")
+   Node N+1: llm_caller(prompt="Final synthesis using summaries: {{STEPS.N.response}}")
+   → Use when: ≥3 upstream nodes each produce ≥500 words of text
+
+⚠️ RULE: Prefer DOTTED PATH ({{STEPS.N.response}}) over bare refs for llm_caller outputs.
+   Bare refs on llm_caller outputs dump the full dict including metadata — wasteful.
+
+──────────────────── CODING PIPELINE ────────────────────
+🔥 Smith has TWO coding tools. Use the right one:
+
+━━━ code_agent (USE THIS FOR TASKS WHERE THE OUTPUT IS CODE) ━━━
+Full agentic pipeline: searches real documentation, generates informed code,
+self-reviews and iterates until confident. Always higher quality than code_assistant.
+
+USE code_agent ONLY when the PRIMARY DELIVERABLE is a runnable code file:
+  • User says: "write", "build", "implement", "create a script/function/class"
+  • User asks for "production-ready", "PR-ready", "fully secure" code
+  • The output is a .py/.js/.ts/etc. file the user will run
+
+❌ NEVER use code_agent when:
+  • User asks to EXPLAIN, ANALYZE, COMPARE, or DESCRIBE something (even if it's about code)
+  • User asks to DESIGN a system or architecture (answer in prose, not code)
+  • User asks HOW something works, or WHY a design decision was made
+  • The prompt says "tell me", "explain", "what is", "how does", "compare", "research"
+  • The task is research, analysis, documentation, or a technical write-up
+  → For these, use google_search + llm_caller (the research pipeline)
+
+Parameters:
+  task:        FULL description of everything required. Include:
+               - Exact libraries (e.g. "use httpx NOT requests")
+               - All constraints: async, typed, PR-ready, rate-limited, etc.
+               - All features requested
+  language:    Target language (default: python)
+  skip_search: false (default) — searches real docs first (RECOMMENDED)
+               true — skip search, faster but no doc context
+
+⚠️ ALWAYS ONE SINGLE code_agent NODE. Never chain it.
+
+EXAMPLE — "Write a Python async web scraper with httpx, retries, proxy, rate limiting, PR-ready":
+  ✅ Node 0: code_agent(
+       task="Production-ready async Python web scraper.
+             MUST use httpx (not requests), BeautifulSoup.
+             Include: async/await, asyncio.Semaphore rate limiter,
+             exponential backoff with jitter, rotating modern user-agents (2024),
+             proxy= parameter (not proxies=), structured logging,
+             custom ScraperError exception, type hints, full docstrings.
+             No unused imports. PR-ready.",
+       language="python"
+     )
+
+COUNTER-EXAMPLE — "Design, analyze, and explain an agentic AI system with DAG execution...":
+  ❌ NOT code_agent — this is a research/architecture question, not "write code"
+  ✅ Use google_search + llm_caller to produce a structured analysis document
+
+━━━ code_assistant (USE ONLY FOR SIMPLE TASKS) ━━━
+Single LLM call, no research, no iteration. Use ONLY for:
+  • operation="explain" — explain existing code
+  • operation="fix" — fix a small bug (paste the broken code)
+  • operation="review" — quick code review (paste the code)
+  • Very simple one-liner generation (no complex requirements)
+
+  ❌ NEVER use llm_caller for any coding task.
+  ❌ NEVER chain multiple coding tool nodes for a single deliverable.
+  ✅ code_agent for all real coding work → one node → great output.
 
 ──────────────────── NEWS_FETCHER PIPELINE ────────────────────
 🔥 When the user asks for NEWS ARTICLES, ALWAYS use this exact 2-node pattern:
@@ -254,12 +387,25 @@ def _validate_plan_constraints(plan_obj: Dict[str, Any]) -> Dict[str, Any]:
     # Count LLM calls
     llm_calls = sum(1 for node in nodes if node.get("tool") == "llm_caller")
 
-    if llm_calls > 3:
-        violations.append(f"Excessive LLM usage: {llm_calls} calls (limit: 3)")
+    # Hard limit: protect against runaway LLM chains
+    # 20 = generous enough for complex multi-section papers
+    if llm_calls > 20:
+        violations.append(f"Excessive LLM usage: {llm_calls} calls (limit: 20)")
 
-    if llm_calls > 2:
+    if llm_calls > 15:
         warnings.append(
-            f"High LLM usage: {llm_calls} calls - consider using computation tools"
+            f"High LLM usage: {llm_calls} calls — ensure each is necessary"
+        )
+
+    # Shallow DAG warning: complex multi-section requests need deeper plans
+    total_nodes = len(nodes)
+    # Detect multi-part requests by counting nodes with code_assistant
+    code_assistant_nodes = sum(1 for n in nodes if n.get("tool") == "code_assistant")
+    if code_assistant_nodes > 2:
+        # Multiple code_assistant calls for what should be a single task is an antipattern
+        violations.append(
+            f"Anti-pattern: {code_assistant_nodes} code_assistant nodes chained together. "
+            "Use ONE code_agent node for coding tasks, or llm_caller for analysis."
         )
 
     # Check single-step plans that use LLM for data retrieval
@@ -386,9 +532,47 @@ def _validate_plan(
         func = n.get("function")
         inputs = n.get("inputs", {})
         depends_on = n.get("depends_on", [])
-        retry = n.get("retry")
-        on_fail = n.get("on_fail")
-        timeout = n.get("timeout")
+        # ── Auto-sanitize fields that weak fallback models often misformat ──
+        # Coerce 'retry' to non-negative int (default 2)
+        raw_retry = n.get("retry")
+        try:
+            retry = int(raw_retry)
+            if retry < 0:
+                retry = 2
+        except (TypeError, ValueError):
+            if raw_retry is not None:
+                import logging as _log
+                _log.getLogger("smith.planner").warning(
+                    f"Node {n.get('id')}: coerced 'retry' from {raw_retry!r} to 2"
+                )
+            retry = 2
+        n["retry"] = retry
+
+        # Coerce 'on_fail' to 'halt' or 'continue' (default 'halt')
+        raw_on_fail = n.get("on_fail", "halt")
+        if raw_on_fail not in ("halt", "continue"):
+            import logging as _log
+            _log.getLogger("smith.planner").warning(
+                f"Node {n.get('id')}: coerced 'on_fail' from {raw_on_fail!r} to 'halt'"
+            )
+            raw_on_fail = "halt"
+        on_fail = raw_on_fail
+        n["on_fail"] = on_fail
+
+        # Coerce 'timeout' to positive int (default 60)
+        raw_timeout = n.get("timeout")
+        try:
+            timeout = int(raw_timeout)
+            if timeout <= 0:
+                timeout = 60
+        except (TypeError, ValueError):
+            if raw_timeout is not None:
+                import logging as _log
+                _log.getLogger("smith.planner").warning(
+                    f"Node {n.get('id')}: coerced 'timeout' from {raw_timeout!r} to 60"
+                )
+            timeout = 60
+        n["timeout"] = timeout
 
         if not tool or not func:
             return {"ok": False, "error": f"Node {nid}: missing 'tool' or 'function'."}
@@ -454,26 +638,7 @@ def _validate_plan(
                     ),
                 }
 
-        # retry
-        if not isinstance(retry, int) or retry < 0:
-            return {
-                "ok": False,
-                "error": f"Node {nid}: 'retry' must be a non-negative integer.",
-            }
-
-        # on_fail
-        if on_fail not in ("halt", "continue"):
-            return {
-                "ok": False,
-                "error": f"Node {nid}: 'on_fail' must be 'halt' or 'continue'.",
-            }
-
-        # timeout
-        if not isinstance(timeout, int) or timeout <= 0:
-            return {
-                "ok": False,
-                "error": f"Node {nid}: 'timeout' must be a positive integer.",
-            }
+        # retry/on_fail/timeout already sanitized above — these are guaranteed valid
 
     # final_output_node must exist
     fon = plan.get("final_output_node")

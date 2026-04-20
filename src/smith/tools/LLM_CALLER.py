@@ -1,14 +1,15 @@
 """
-LLM CALLER — Groq Edition
---------------------------
-Uses Groq API for fast LLM inference.
-Supports Llama and Mixtral models with automatic fallback.
+LLM CALLER — OpenRouter Edition
+---------------------------------
+Uses OpenRouter API for LLM inference.
+Supports free NVIDIA Nemotron model via OpenRouter.
 """
 
 import os
 import time
 import logging
 import threading
+import json
 from dotenv import load_dotenv
 
 # Set up logging
@@ -23,13 +24,16 @@ load_dotenv()
 # Configuration
 # ------------------------------
 
-API_KEY = os.getenv("GROQ_API_KEY")
+# OpenRouter API key
+API_KEY = os.getenv(
+    "OPENROUTER_API_KEY",
+    "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",
+)
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 VALID_MODELS = [
-    "llama-3.3-70b-versatile",
-    "llama3-70b-8192",
-    "mixtral-8x7b-32768",
-    "llama3-8b-8192",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
 ]
 
 PRIMARY_MODEL = VALID_MODELS[0]
@@ -37,15 +41,14 @@ PRIMARY_MODEL = VALID_MODELS[0]
 client = None
 init_error = None
 
-# Global rate limiter — ensures minimum delay between ALL LLM calls
-# This is shared across all orchestrator instances (parent + sub-agents)
+# Minimal rate limiter — just to avoid hammering the API
 _global_lock = threading.Lock()
 _last_call_time = 0.0
-_MIN_CALL_INTERVAL = 3.0  # seconds between API calls (strict: 1 call per 3s)
+_MIN_CALL_INTERVAL = 0.3  # seconds between API calls
 
 
 def _global_rate_limit():
-    """Enforce global rate limiting across all threads/orchestrators."""
+    """Enforce minimal delay between API calls."""
     global _last_call_time
     with _global_lock:
         now = time.time()
@@ -56,17 +59,28 @@ def _global_rate_limit():
         _last_call_time = time.time()
 
 
+# --- Initialize OpenAI-compatible client for OpenRouter ---
 try:
-    from groq import Groq
+    from openai import OpenAI
 
     if API_KEY:
-        client = Groq(api_key=API_KEY)
+        client = OpenAI(
+            base_url=OPENROUTER_BASE_URL,
+            api_key=API_KEY,
+        )
     else:
-        init_error = "Missing GROQ_API_KEY environment variable."
+        init_error = "Missing OPENROUTER_API_KEY environment variable."
+
 except ImportError:
-    init_error = "Module 'groq' not found. Install with `pip install groq`."
-except Exception as e:
-    init_error = str(e)
+    # Fallback: use requests directly
+    client = None
+    logger.warning("openai module not found — will use requests fallback.")
+
+    try:
+        import requests as _requests
+    except ImportError:
+        init_error = "Neither 'openai' nor 'requests' module found. Install one."
+
 
 # ------------------------------
 # Helper Functions
@@ -74,7 +88,7 @@ except Exception as e:
 
 
 def extract_text(response) -> str:
-    """Extract text from Groq response."""
+    """Extract text from OpenAI-compatible response."""
     try:
         if hasattr(response, "choices") and response.choices:
             choice = response.choices[0]
@@ -85,60 +99,87 @@ def extract_text(response) -> str:
         return f"[PARSE ERROR] {str(e)}"
 
 
+def _fallback_generate(prompt: str, model: str) -> dict:
+    """Use raw requests as fallback when openai SDK is not available."""
+    import requests
+
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.7,
+        "max_tokens": 8192,
+        "top_p": 0.95,
+    }
+    resp = requests.post(
+        f"{OPENROUTER_BASE_URL}/chat/completions",
+        headers=headers,
+        json=payload,
+        timeout=120,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    content = data["choices"][0]["message"]["content"]
+    return {"status": "success", "response": content}
+
+
 def safe_generate(prompt: str, model: str, max_retries: int = 3, base_delay: int = 2):
-    """Call Groq API with retry logic."""
-    if not client:
+    """Call OpenRouter API with retry logic."""
+    if client is None and init_error and "requests" not in str(init_error).lower():
         raise RuntimeError(f"Client not initialized: {init_error}")
 
     current_model = model
 
     for attempt in range(max_retries + 1):
         try:
-            # Global rate limit — prevents 429 across all orchestrators
             _global_rate_limit()
 
-            response = client.chat.completions.create(
-                model=current_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=8192,
-                top_p=0.95,
-            )
-            return response
+            if client is not None:
+                # Use OpenAI SDK
+                response = client.chat.completions.create(
+                    model=current_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.7,
+                    max_tokens=8192,
+                    top_p=0.95,
+                )
+                return response
+            else:
+                # Fallback to requests
+                result = _fallback_generate(prompt, current_model)
+                # Wrap in a simple object for compatibility
+                class _FakeResponse:
+                    class _Choice:
+                        class _Message:
+                            def __init__(self, content):
+                                self.content = content
+                        def __init__(self, content):
+                            self.message = self._Message(content)
+                    def __init__(self, content):
+                        self.choices = [self._Choice(content)]
+                return _FakeResponse(result["response"])
 
         except Exception as e:
             msg = str(e).lower()
 
             # Handle rate limiting
-            if "429" in msg or "rate_limit" in msg or "quota" in msg:
-                delay = base_delay * (2**attempt)
+            if "429" in msg or "rate_limit" in msg or "rate limit" in msg:
+                delay = base_delay * (2 ** attempt)
                 logger.warning(
-                    f"Rate limit hit ({current_model}). Retrying in {delay}s..."
+                    f"Rate limit hit ({current_model}). Sleeping {delay}s..."
                 )
                 time.sleep(delay)
                 continue
 
-            # Handle invalid model - try fallback
-            if "404" in msg or "not found" in msg or "invalid" in msg:
-                if current_model in VALID_MODELS:
-                    try:
-                        current_idx = VALID_MODELS.index(current_model)
-                        if current_idx + 1 < len(VALID_MODELS):
-                            fallback = VALID_MODELS[current_idx + 1]
-                            logger.warning(
-                                f"Model '{current_model}' unavailable. Switching to: {fallback}"
-                            )
-                            current_model = fallback
-                            continue
-                    except ValueError:
-                        pass
-
-            # Re-raise on final attempt or non-retryable errors
+            # Re-raise on final attempt
             if attempt == max_retries:
                 raise e
 
             # Generic retry with backoff
-            delay = base_delay * (2**attempt)
+            delay = base_delay * (2 ** attempt)
             logger.warning(f"Error: {e}. Retrying in {delay}s...")
             time.sleep(delay)
 
@@ -152,7 +193,7 @@ def safe_generate(prompt: str, model: str, max_retries: int = 3, base_delay: int
 
 def call_llm(prompt: str, model: str = None):
     """
-    Call Groq LLM with the given prompt.
+    Call LLM via OpenRouter with the given prompt.
 
     Args:
         prompt: Text prompt for the LLM
@@ -163,7 +204,11 @@ def call_llm(prompt: str, model: str = None):
     """
     target_model = model or PRIMARY_MODEL
 
-    if client is None:
+    # Ignore old Groq model names — always use our OpenRouter model
+    if "llama" in target_model.lower() or "mixtral" in target_model.lower():
+        target_model = PRIMARY_MODEL
+
+    if client is None and init_error and "requests" not in str(init_error).lower():
         return {"status": "error", "error": init_error}
 
     try:
@@ -200,7 +245,7 @@ llm_caller = run_llm_tool
 METADATA = {
     "name": "llm_caller",
     "description": (
-        "Access a Large Language Model (Llama 3.3 70B via Groq) to summarize text, answer questions, or write code."
+        "Access a Large Language Model (NVIDIA Nemotron 30B via OpenRouter) to summarize text, answer questions, or write code."
     ),
     "function": "run_llm_tool",
     "dangerous": False,

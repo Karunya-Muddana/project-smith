@@ -31,6 +31,7 @@ class GroundTruthRegistry:
     def __init__(self):
         self._numbers: Dict[str, float] = {}  # label -> value
         self._all_values: Set[float] = set()
+        self._audit_trail: List[Dict[str, Any]] = []  # per-symbol audit records
 
     def register_finance(self, trace_entry: Dict[str, Any]) -> None:
         """Extract verified numbers from a finance_fetcher result."""
@@ -56,6 +57,13 @@ class GroundTruthRegistry:
                 symbol = inner.get("symbol", "unknown")
                 self._numbers[f"finance:{symbol}:price"] = val
                 self._all_values.add(val)
+                # Audit trail entry
+                self._audit_trail.append({
+                    "symbol": symbol,
+                    "verified_price": val,
+                    "currency": inner.get("currency", "USD"),
+                    "source": "finance_fetcher",
+                })
                 logger.debug(f"Ground truth registered: {symbol} price = {val}")
             except (ValueError, TypeError):
                 pass
@@ -113,6 +121,10 @@ class GroundTruthRegistry:
     def get_labeled_values(self) -> Dict[str, float]:
         """Return labeled ground truth values."""
         return self._numbers.copy()
+
+    def get_audit_trail(self) -> List[Dict[str, Any]]:
+        """Return the per-symbol finance audit trail."""
+        return list(self._audit_trail)
 
 
 # ============================================================================
@@ -190,6 +202,7 @@ def _is_within_tolerance(value: float, ground_truth: Set[float], tolerance: floa
 def check_and_redact(
     response_text: str,
     ground_truth: GroundTruthRegistry,
+    include_audit: bool = False,
 ) -> Dict[str, Any]:
     """
     Check LLM response for fabricated numeric data and redact it.
@@ -197,6 +210,7 @@ def check_and_redact(
     Args:
         response_text: The LLM's synthesis response text
         ground_truth: Registry of verified numbers from data tools
+        include_audit: If True, append the finance audit trail to the result
 
     Returns:
         {
@@ -208,6 +222,7 @@ def check_and_redact(
                 "redacted_details": [{"value": float, "context": str, "reason": str}],
             },
             "confidence": "high" | "medium" | "low_confidence",
+            "audit_trail": [...],       # only present when include_audit=True
         }
     """
     gt_values = ground_truth.get_all_values()
@@ -299,7 +314,7 @@ def check_and_redact(
     else:
         confidence = "high"
 
-    return {
+    out: Dict[str, Any] = {
         "redacted_text": redacted_text,
         "fabrication_report": {
             "total_numbers": total,
@@ -309,3 +324,6 @@ def check_and_redact(
         },
         "confidence": confidence,
     }
+    if include_audit:
+        out["audit_trail"] = ground_truth.get_audit_trail()
+    return out

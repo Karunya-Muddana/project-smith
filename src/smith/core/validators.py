@@ -93,17 +93,29 @@ def contains_numeric_claims(text: str) -> bool:
 
 
 def contains_factual_assertions(text: str, inputs: Dict) -> bool:
-    """Detect unsupported factual claims"""
+    """Detect unsupported factual claims — only for data-fetching contexts."""
     # If prompt contains references to steps, it's synthesis (allowed)
     prompt = inputs.get("prompt", "")
     if re.search(r"step\s+\d+|from\s+step|based\s+on", prompt, re.IGNORECASE):
         return False  # This is synthesis, not fabrication
 
-    # Patterns for factual assertions
+    # Only flag if the prompt itself was asking for real-world data
+    # (not for writing, analysis, or explanation)
+    data_request_patterns = [
+        r"(?:what is|get|find|fetch|show me).*?(?:price|stock|weather|rate|score)",
+        r"(?:how much|how many).*?(?:cost|worth|value)",
+    ]
+    prompt_is_data_request = any(
+        re.search(p, prompt, re.IGNORECASE) for p in data_request_patterns
+    )
+    if not prompt_is_data_request:
+        # This is a writing/analysis task — don't penalise factual prose
+        return False
+
+    # Only check time-specific claims in confirmed data-request context
     patterns = [
-        r"(?:currently|now|today|as of)",  # Time-specific claims
-        r"(?:is|are|has|have)\s+(?:the|a|an)\s+(?:price|value|rate)",  # Definitive statements
-        r"according to",  #  Source claims without actual source
+        r"(?:currently|as of today)\s+(?:the|a)\s+(?:price|rate|value|stock)",
+        r"(?:is|are)\s+(?:priced|valued|trading)\s+at\s+\$?[\d,.]+",
     ]
 
     for pattern in patterns:
@@ -114,11 +126,12 @@ def contains_factual_assertions(text: str, inputs: Dict) -> bool:
 
 
 def contains_time_references(text: str) -> bool:
-    """Detect real-time data references"""
+    """Detect real-time financial/weather data references — NOT general writing."""
+    # Only flag if talking about real-time price/weather/stock data, not general 'recent research'
     patterns = [
-        r"as of.*?(?:202\d|today|now)",
-        r"current.*?(?:price|temperature|weather|stock)",
-        r"(?:latest|recent).*?(?:data|news|report)",
+        r"as of.*?(?:today|right now|this moment)",
+        r"current.*?(?:price|stock price|temperature|weather reading)",
+        r"(?:live|real-time)\s+(?:price|stock|data|feed)",
     ]
 
     for pattern in patterns:

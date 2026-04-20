@@ -38,6 +38,10 @@ try:
     from smith.core.template_engine import resolve_llm_prompt, resolve_step_reference  # P1/P2/P6
     from smith.core.input_validators import validate_inputs  # P3
     from smith.core.fabrication_guard import GroundTruthRegistry, check_and_redact  # P4
+    from smith.core.synthesis_router import select_synthesis_model  # I1
+    from smith.core.cache_manager import CacheManager  # I5
+    from smith.core.run_context import RunContextManager  # RAG step accumulator
+    from smith.core.synthesis_engine import run_synthesis  # Critic+RAG synthesis
 except ImportError as e:
     # Fail fast if the package structure is invalid
     sys.stderr.write(
@@ -108,10 +112,10 @@ class RateLimiter:
 
     # Default delays in seconds
     DEFAULT_LIMITS = {
-        "llm_caller": 1.0,  # Prevent rapid-fire LLM calls
-        "google_search": 0.5,
-        "news_fetcher": 0.5,
-        "weather_fetcher": 0.2,
+        "llm_caller": 0.2,  # Minimal delay between LLM calls
+        "google_search": 0.1,
+        "news_fetcher": 0.1,
+        "weather_fetcher": 0.05,
     }
 
     def __init__(self):
@@ -230,6 +234,8 @@ def smith_orchestrator(
     user_msg: str,
     require_approval: bool = config.require_approval,
     exclude_tools: list = None,
+    verify_finance: bool = False,
+    cache_manager: "Optional[CacheManager]" = None,
 ) -> Generator[Dict[str, Any], None, None]:
     """
     The Main Event Loop.
@@ -299,9 +305,17 @@ def smith_orchestrator(
     completed: Set[int] = set()
     submitted: Set[int] = set()
     futures: Dict[concurrent.futures.Future, tuple] = {}
+    cache_hits: List[int] = []  # step indices that were served from cache
 
     # Rate limiter logic (simple local instance)
     limiter = RateLimiter()
+
+    # Run context manager: accumulates step outputs for RAG synthesis
+    run_ctx = RunContextManager(run_id)
+    try:
+        run_ctx.cleanup()  # Remove stale run files (keep last 20)
+    except Exception:
+        pass
 
     # 4) Main Parallel Loop ------------------------------------------------
     # 4) Main Parallel Loop ------------------------------------------------
@@ -462,13 +476,62 @@ def smith_orchestrator(
                         safe_args["prompt"] = resolve_llm_prompt(p, trace, nodes)
 
                 # General resolver: replace {{STEPS.N}} references with raw objects for ALL tools
-                for key, value in safe_args.items():
+                for key, value in list(safe_args.items()):
                     if isinstance(value, str):
+                        # Case 1: entire value is a bare {{STEPS.N}} — resolve to raw object
                         m = STEP_REF_RE.match(value.strip())
                         if m:
                             # --- FIX P2: Use template engine's resolver with null handling ---
                             resolved = resolve_step_reference(value, trace)
+
+                            # --- CODE UNWRAPPING: when 'code' key gets a code_assistant result dict,
+                            # extract the actual code string rather than passing the raw dict ---
+                            if key == "code" and isinstance(resolved, dict):
+                                # code_assistant returns {status, response, primary_code, code_blocks, ...}
+                                if "primary_code" in resolved:
+                                    resolved = resolved["primary_code"]
+                                elif "response" in resolved:
+                                    # Strip surrounding markdown fences if needed
+                                    import re as _re
+                                    code_match = _re.search(r"```\w*\n?(.*?)```", resolved["response"], _re.DOTALL)
+                                    resolved = code_match.group(1).strip() if code_match else resolved["response"]
+
                             safe_args[key] = resolved
+                        else:
+                            # Case 2: value contains {{STEPS.N.path.subpath}} dotted references
+                            # These need to be resolved inline (e.g. Gmail subject/body)
+                            def _resolve_dotted(match):
+                                idx = int(match.group(1))
+                                path = match.group(2).strip()
+                                if idx < 0 or idx >= len(trace) or trace[idx] is None:
+                                    logger.warning(f"Null substitution for STEPS.{idx}.{path}")
+                                    return ""
+                                entry = trace[idx]
+                                if entry.get("status") not in ("success",):
+                                    return f"[Step {idx} unavailable]"
+                                data = entry.get("result")
+                                # Walk the dotted path
+                                for part in path.split("."):
+                                    if isinstance(data, dict):
+                                        data = data.get(part)
+                                    elif isinstance(data, (list, tuple)):
+                                        try:
+                                            data = data[int(part)]
+                                        except (ValueError, IndexError):
+                                            data = None
+                                    else:
+                                        data = None
+                                    if data is None:
+                                        break
+                                if data is None:
+                                    return ""
+                                if isinstance(data, (dict, list)):
+                                    return json.dumps(data, default=str)
+                                return str(data)
+
+                            resolved_str = PLACEHOLDER_RE.sub(_resolve_dotted, value)
+                            if resolved_str != value:
+                                safe_args[key] = resolved_str
 
                 # --- FIX P3: Validate upstream input shapes before execution ---
                 input_validation = validate_inputs(tool_name, safe_args)
@@ -570,8 +633,50 @@ def smith_orchestrator(
                     n_timeout = max(n_timeout, 120.0)
                     n_retry = 0  # Don't retry sub-agents
 
+                # code_agent runs an internal LLM loop (search + generate + critique × N)
+                # It needs a long timeout and must NOT be retried — each retry burns the rate limit
+                if tool_name == "code_agent":
+                    n_timeout = max(n_timeout, 180.0)
+                    n_retry = 0  # Never retry code_agent
+
                 # Get current agent ID (or use run_id as fallback)
                 agent_id = getattr(config, "_current_agent_id", run_id)
+
+                # --- I5: Check run cache before submitting to thread pool ---
+                cache_key = None
+                if cache_manager is not None and config.cache_enabled:
+                    cache_key = CacheManager.make_key(tool_name, safe_args)
+                    cached_result = cache_manager.get(cache_key)
+                    if cached_result is not None:
+                        logger.info(f"Cache HIT for Step {idx} ({tool_name})")
+                        trace_entry = {
+                            "step_index": idx,
+                            "tool": tool_name,
+                            "function": fn_name,
+                            "status": cached_result.get("status", "success"),
+                            "quality": "cache_hit",
+                            "violations": None,
+                            "result": cached_result,
+                            "duration": 0.0,
+                            "cache_hit": True,
+                        }
+                        trace[idx] = trace_entry
+                        completed.add(idx)
+                        submitted.add(idx)
+                        cache_hits.append(idx)
+                        yield {
+                            "type": "step_complete",
+                            "step_index": idx,
+                            "tool": tool_name,
+                            "function": fn_name,
+                            "status": cached_result.get("status", "success"),
+                            "payload": cached_result,
+                            "run_id": run_id,
+                            "step_id": step_id,
+                            "duration": 0.0,
+                            "cache_hit": True,
+                        }
+                        continue
 
                 # --- FIX P5: Record start_time for real duration tracking ---
                 node_start_time = time.perf_counter()
@@ -646,9 +751,19 @@ def smith_orchestrator(
                     "violations": violations if violations else None,
                     "result": result_payload,
                     "duration": duration_seconds,  # FIX P5: Real wall-clock duration
+                    "cache_hit": False,
                 }
                 trace[f_idx] = trace_entry
                 completed.add(f_idx)
+
+                # --- I5: Persist successful results to cache ---
+                if (
+                    cache_manager is not None
+                    and config.cache_enabled
+                    and result_payload.get("status") == "success"
+                ):
+                    _cache_key = CacheManager.make_key(f_tool, f_args)
+                    cache_manager.set(_cache_key, result_payload, tool_name=f_tool)
 
                 # Emit Event
                 is_success = result_payload.get("status") == "success"
@@ -663,6 +778,28 @@ def smith_orchestrator(
                     "step_id": f"{run_id}-step-{f_idx}",
                     "duration": duration_seconds,  # FIX P5: Real wall-clock duration
                 }
+
+                # ── Append to run context file (feeds RAG synthesis) ────────
+                if result_payload.get("status") == "success" and run_ctx is not None:
+                    _resp = ""
+                    _r = result_payload
+                    if isinstance(_r, dict):
+                        for _k in ("response", "content", "summary", "text"):
+                            _v = _r.get(_k)
+                            if _v and isinstance(_v, str) and len(_v) > 20:
+                                _resp = _v
+                                break
+                        if not _resp:
+                            _resp = json.dumps(_r, default=str)[:4000]
+                    else:
+                        _resp = str(_r)[:4000]
+                    if _resp:
+                        run_ctx.append_step(
+                            step_idx=f_idx,
+                            tool=f_tool,
+                            thought=f_node.get("thought", ""),
+                            response_text=_resp,
+                        )
 
     # 4) Final synthesis from trace ----------------------------------------
     yield {"type": "status", "message": "Drafting final answer...", "run_id": run_id}
@@ -695,7 +832,8 @@ def smith_orchestrator(
         if failed or skipped:
             failure_ctx = "\nExecution Notes:\n"
             if failed:
-                failure_ctx += f"- {len(failed)} step(s) FAILED: {[f'{t.get("tool")} (step {t.get("step_index")})' for t in failed]}\n"
+                failed_tools = [f"{t.get('tool')} (step {t.get('step_index')})" for t in failed]
+                failure_ctx += f"- {len(failed)} step(s) FAILED: {failed_tools}\n"
             if skipped:
                 failure_ctx += f"- {len(skipped)} step(s) SKIPPED due to upstream failures\n"
             if succeeded:
@@ -703,19 +841,73 @@ def smith_orchestrator(
             else:
                 failure_ctx += "- NO steps succeeded. Explain what went wrong.\n"
 
-        final_prompt = (
-            f"User Request: {user_msg}\n\n"
-            f"Execution Trace (machine readable JSON):\n{ctx_str}\n\n"
-            f"{failure_ctx}\n"
-            "INSTRUCTIONS:\n"
-            "1. Answer using information present in the trace. Prioritize data from successful steps.\n"
-            "2. If some tools failed but others succeeded, synthesize the best answer from available data.\n"
-            "3. If ALL tools failed, explain what went wrong concisely.\n"
-            "4. Do not invent URLs, numbers, or tools that are not present.\n"
-        )
+        # --- I4: Graceful Capability Acknowledgment ---
+        # Collect tools that are unavailable (error or skipped) for synthesis prompt context
+        unavailable_tools = [
+            {"tool": t.get("tool"), "step": t.get("step_index"), "reason": t.get("result", {}).get("error", "unavailable") if isinstance(t.get("result"), dict) else "unavailable"}
+            for t in compact_trace
+            if t.get("status") in ("error", "skipped")
+        ]
+        unavailable_ctx = ""
+        if unavailable_tools:
+            unavailable_ctx = "\nUnavailable Sources (inform the user honestly):\n"
+            for u in unavailable_tools:
+                unavailable_ctx += f"  - {u['tool']} (step {u['step']}): {u['reason']}\n"
+            unavailable_ctx += "If a user asks about these sources, tell them they were unavailable during this run.\n"
 
-        model = config.primary_model
-        final = LLM_CALLER.call_llm(final_prompt, model=model)
+        # ── CODE PASSTHROUGH: skip synthesis for code tool output ────────────
+        # code_assistant and code_agent both return a response that IS the final answer.
+        # Running through the synthesizer would destroy syntax and structure.
+        _CODE_TOOLS = {"code_assistant", "code_agent"}
+        code_steps = [
+            t for t in compact_trace
+            if t.get("tool") in _CODE_TOOLS and t.get("status") == "success"
+        ]
+        if code_steps:
+            combined_parts = []
+            for cs in code_steps:
+                result = cs.get("result", {})
+                if isinstance(result, dict):
+                    response = result.get("response", "")
+                    operation = result.get("operation", "")
+                else:
+                    response = str(result)
+                    operation = ""
+
+                # Skip empty / placeholder responses (e.g. "No code provided for review")
+                if not response or "no code" in response.lower()[:50]:
+                    continue
+
+                combined_parts.append(response)
+
+            if combined_parts:
+                combined_response = "\n\n---\n\n".join(combined_parts)
+                logger.info(
+                    f"CodePassthrough: combined {len(combined_parts)} code_assistant result(s) directly (skipping synthesis LLM)"
+                )
+                yield {
+                    "type": "final_answer",
+                    "payload": {
+                        "response": combined_response,
+                        "model": "code_assistant (passthrough)",
+                        "cache_hits": cache_hits,
+                        "fabrication_report": {"total_numbers": 0, "verified": 0, "redacted": 0, "redacted_details": []},
+                        "confidence": "high",
+                        "audit_trail": [],
+                    },
+                }
+                return
+
+        # ── SYNTHESIS via engine (format detect + critic + RAG) ─────────────
+        final = run_synthesis(
+            user_msg=user_msg,
+            trace=trace,
+            nodes=nodes,
+            run_ctx=run_ctx,
+            failure_ctx=failure_ctx,
+            unavailable_ctx=unavailable_ctx,
+            console=None,
+        )
 
         # --- FIX P4: Fabrication guard enforcement ---
         # Build ground truth registry from data tool results
@@ -724,9 +916,13 @@ def smith_orchestrator(
 
         # Check and redact fabrications in the final response
         if final.get("status") == "success" and final.get("response"):
-            guard_result = check_and_redact(final["response"], gt_registry)
+            guard_result = check_and_redact(
+                final["response"], gt_registry, include_audit=verify_finance
+            )
             final["response"] = guard_result["redacted_text"]
             final["fabrication_report"] = guard_result["fabrication_report"]
+            if verify_finance and "audit_trail" in guard_result:
+                final["audit_trail"] = guard_result["audit_trail"]
             if guard_result["confidence"] == "low_confidence":
                 final["confidence"] = "low_confidence"
                 final["confidence_warning"] = (
@@ -734,6 +930,10 @@ def smith_orchestrator(
                     "against upstream tool results. Please verify manually."
                 )
                 logger.warning("Final output marked as low_confidence due to fabrication rate")
+
+        # Attach cache hit info to final payload
+        final["cache_hits"] = cache_hits
+        final["cache_hit_count"] = len(cache_hits)
 
         yield {"type": "final_answer", "payload": final, "run_id": run_id}
 

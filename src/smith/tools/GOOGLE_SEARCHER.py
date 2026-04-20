@@ -5,7 +5,7 @@ Pipeline:
     RAW QUERY
         │
         ▼
-    [QueryOptimizer]  ← llama-3.1-8b-instant (Groq, fast sub-model)
+    [QueryOptimizer]  ← nvidia/nemotron-3-nano-30b-a3b (OpenRouter, free)
         │  Rewrites raw/vague query into precise search keywords
         ▼
     [DuckDuckGo]      ← via duckduckgo-search (pip, no API key)
@@ -21,7 +21,7 @@ import os
 import re
 import logging
 from dotenv import load_dotenv
-from groq import Groq
+from openai import OpenAI
 
 load_dotenv()
 
@@ -31,8 +31,11 @@ logger = logging.getLogger(__name__)
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-GROQ_API_KEY     = os.getenv("GROQ_API_KEY", "")
-OPTIMIZER_MODEL  = "llama-3.1-8b-instant"
+OPENROUTER_API_KEY = os.getenv(
+    "OPENROUTER_API_KEY",
+    "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",
+)
+OPTIMIZER_MODEL  = "nvidia/nemotron-3-nano-30b-a3b:free"
 
 # Optional: self-hosted SearXNG instance for JSON API (set in .env)
 SEARXNG_URL      = os.getenv("SEARXNG_URL", "")
@@ -73,15 +76,18 @@ def optimize_query(raw_query: str) -> str:
     Rewrite the raw query into a precise search string using a fast LLM.
     Returns the original query as fallback on any failure.
     """
-    if not GROQ_API_KEY:
-        logger.debug("[QueryOptimizer] No GROQ_API_KEY — using raw query.")
+    if not OPENROUTER_API_KEY:
+        logger.debug("[QueryOptimizer] No OPENROUTER_API_KEY — using raw query.")
         return raw_query
 
     if not raw_query or not raw_query.strip():
         return raw_query
 
     try:
-        client = Groq(api_key=GROQ_API_KEY)
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPENROUTER_API_KEY,
+        )
         response = client.chat.completions.create(
             model=OPTIMIZER_MODEL,
             messages=[
@@ -196,9 +202,10 @@ def _search_searxng(query: str, num_results: int) -> list[dict] | None:
 # MAIN PIPELINE
 # ─────────────────────────────────────────────────────────────────────────────
 
-def perform_search(query: str, num_results: int = 10) -> dict:
+def perform_search(query: str, num_results: int = 10, fetch_webpages: bool = True) -> dict:
     """
     Search the web. Tries DuckDuckGo first, then SearXNG if configured.
+    Optionally fetches the full webpage content for top results.
     """
     if not query:
         return {"status": "error", "error": "Query is required"}
@@ -207,31 +214,54 @@ def perform_search(query: str, num_results: int = 10) -> dict:
 
     # Try DuckDuckGo first (always available, no config needed)
     results = _search_duckduckgo(query, num_results)
-    if results:
+    engine = "duckduckgo"
+
+    # Fallback to SearXNG if configured and DuckDuckGo failed
+    if not results:
+        results = _search_searxng(query, num_results)
+        engine = "searxng"
+
+    if not results:
         return {
-            "status":     "success",
-            "result":     results,
-            "query_used": query,
-            "engine":     "duckduckgo",
+            "status": "error",
+            "error":  "All search backends failed. Try again in a few seconds.",
         }
 
-    # Fallback to SearXNG if configured
-    results = _search_searxng(query, num_results)
-    if results:
-        return {
-            "status":     "success",
-            "result":     results,
-            "query_used": query,
-            "engine":     "searxng",
-        }
+    # Fetch full webpage content if requested
+    if fetch_webpages:
+        try:
+            from smith.tools.URL_READER import run_url_reader
+            
+            # Fetch up to top 3 results
+            fetch_count = min(3, len(results))
+            logger.info(f"[{engine.upper()}] Fetching full webpages for top {fetch_count} results...")
+            
+            for i in range(fetch_count):
+                url = results[i].get("link")
+                if not url:
+                    continue
+                    
+                # Get the full page text, capped to roughly 1500 words
+                page_data = run_url_reader(url, max_length=15000)
+                
+                if page_data.get("status") == "success" and page_data.get("content"):
+                    # Replace the short snippet with the full extracted text
+                    results[i]["content"] = page_data["content"]
+                    logger.debug(f"[{engine.upper()}] Fetched {page_data.get('content_length')} chars from [{i+1}] {url}")
+        except ImportError:
+            logger.warning("URL_READER not found, skipping full webpage fetch.")
+        except Exception as e:
+            logger.warning(f"Error fetching full webpages: {e}")
 
     return {
-        "status": "error",
-        "error":  "All search backends failed. Try again in a few seconds.",
+        "status":     "success",
+        "result":     results,
+        "query_used": query,
+        "engine":     engine,
     }
 
 
-def run_google_search(query: str, num_results: int = 10) -> dict:
+def run_google_search(query: str, num_results: int = 10, fetch_webpages: bool = True) -> dict:
     """
     Full search pipeline: optimize query → search → return results.
 
@@ -239,7 +269,7 @@ def run_google_search(query: str, num_results: int = 10) -> dict:
     with the planner and orchestrator.
     """
     optimized_query = optimize_query(query)
-    return perform_search(optimized_query, num_results)
+    return perform_search(optimized_query, num_results, fetch_webpages)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -262,9 +292,11 @@ METADATA = {
         "Uses DuckDuckGo as primary search engine — no API key needed. "
         "Optionally falls back to a self-hosted SearXNG instance if "
         "SEARXNG_URL is set in .env. "
-        "Includes an internal LLM query optimizer (llama-3.1-8b-instant) that "
+        "Includes an internal LLM query optimizer (Nemotron via OpenRouter) that "
         "automatically rewrites vague or natural-language queries into precise "
-        "search strings. Pass raw user intent directly."
+        "search strings. Pass raw user intent directly. "
+        "Automatically fetches and extracts the full page text of the top 3 results "
+        "by default, providing deep research context instead of just short snippets."
     ),
     "function":    "run_google_search",
     "dangerous":   False,
@@ -282,10 +314,15 @@ METADATA = {
             },
             "num_results": {
                 "type":        "integer",
-                "description": "Number of results to return (1–20, default 10).",
+                "description": "Number of search results to retrieve (1–20, default 10).",
                 "default":     10,
                 "minimum":     1,
                 "maximum":     20,
+            },
+            "fetch_webpages": {
+                "type":        "boolean",
+                "description": "If True, auto-fetches the full page text for the top 3 results for deeper context. Default True.",
+                "default":     True
             },
         },
         "required": ["query"],

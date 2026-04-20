@@ -1,6 +1,0 @@
-﻿API Key: AIzaSyCD_KAwicP...
-Search Engine ID: d42e236ea96b741ea
-{
-  "status": "error",
-  "error": "HTTP 403: 403 Client Error: Forbidden for url: https://www.googleapis.com/customsearch/v1?key=AIzaSyCD_KAwicPjIUFcNEPpZMCbHX5QiHeewfE&cx=d42e236ea96b741ea&q=Dubai+business+setup+requirements+2025+site%3Agulfnews.com+OR+site%3Akhaleejtimes.com&num=2"
-}

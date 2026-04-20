@@ -2,7 +2,7 @@
 Global Throttling & Circuit Breaker Module
 ------------------------------------------
 Provides a singleton rate limiter and circuit breaker to manage
-traffic to external APIs (Gemini, Groq) globally across the daemon.
+traffic to external APIs (OpenRouter) globally across the daemon.
 """
 
 import time
@@ -151,15 +151,15 @@ class GlobalThrottler:
         self.limiters: Dict[str, TokenBucket] = {}
         self.circuits: Dict[str, CircuitBreaker] = {}
 
-        # Initialize Groq
-        self.limiters["groq"] = TokenBucket(
-            rpm=config.groq_rpm,
-            tpm=config.groq_tpm,
+        # Initialize OpenRouter
+        self.limiters["openrouter"] = TokenBucket(
+            rpm=config.api_rpm,
+            tpm=config.api_tpm,
             burst=5,  # Allow more burst for fallback
         )
-        # Groq circuit breaker
-        self.circuits["groq"] = CircuitBreaker(
-            "groq", failure_threshold=10, recovery_timeout=30
+        # OpenRouter circuit breaker
+        self.circuits["openrouter"] = CircuitBreaker(
+            "openrouter", failure_threshold=10, recovery_timeout=30
         )
 
     def wait_for_slot(self, provider: str, estimated_tokens: int = 100):

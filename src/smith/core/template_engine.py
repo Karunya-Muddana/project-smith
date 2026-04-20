@@ -18,11 +18,12 @@ logger = logging.getLogger("smith.template_engine")
 # CONSTANTS
 # ============================================================================
 
-# Anti-fabrication system instruction prepended to ALL llm_caller prompts
+# Anti-fabrication system instruction prepended to llm_caller prompts that have result data
 SYNTHESIS_SYSTEM_INSTRUCTION = (
-    "Use ONLY the data in the <result> tags below. "
-    "If a result is marked UNAVAILABLE, acknowledge the gap — never invent data. "
-    "Never fabricate numbers, prices, costs, or statistics.\n\n"
+    "Prioritize the data in the <result> tags below when answering. "
+    "If a result is marked UNAVAILABLE, acknowledge the gap. "
+    "Never fabricate numbers, prices, costs, or statistics. "
+    "If no result data is provided, use your training knowledge to answer.\n\n"
 )
 
 # Maximum total tokens for synthesis prompt (leaves room for system + output)
@@ -30,13 +31,17 @@ MAX_SYNTHESIS_TOKENS = 6000
 
 # Per-tool-type token budgets
 TOKEN_BUDGETS = {
-    "finance_fetcher": 200,
-    "weather_fetcher": 200,
+    "finance_fetcher":  200,
+    "weather_fetcher":  200,
     "wikipedia_lookup": 800,
-    "google_search": 400,
-    "news_fetcher": 1500,
-    "arxiv_search": 600,
-    "url_reader": 800,
+    "google_search":    400,
+    "news_fetcher":     1500,
+    "arxiv_search":     600,
+    "url_reader":       800,
+    "code_agent":       2000,   # can be large; extract .response or condense
+    "code_assistant":   1000,
+    "llm_caller":       800,    # prefer .response dotted path for these
+    "sub_agent":        1200,
 }
 DEFAULT_TOKEN_BUDGET = 500
 
@@ -81,6 +86,36 @@ def truncate_to_budget(text: str, tool_name: str) -> str:
         truncated = truncated[:last_space]
 
     return truncated + "\n[truncated]"
+
+
+# Threshold above which we condense rather than hard-truncate (chars)
+CONDENSE_THRESHOLD_CHARS = 3000
+
+
+def condense_result(text: str, tool_name: str) -> str:
+    """
+    For large results, return a head + tail slice with a marker in the middle.
+    Preserves the start (usually the most important) and the end (conclusion).
+    Falls back to truncate_to_budget for very large results.
+    """
+    if not text or len(text) <= CONDENSE_THRESHOLD_CHARS:
+        return text
+
+    # Tools where we want a proper budget truncation, not head+tail
+    hard_truncate_tools = {"finance_fetcher", "weather_fetcher", "google_search"}
+    if tool_name in hard_truncate_tools:
+        return truncate_to_budget(text, tool_name)
+
+    head_chars = 1800
+    tail_chars = 400
+    omitted = len(text) - head_chars - tail_chars
+
+    if omitted <= 0:
+        return text
+
+    head = text[:head_chars].rstrip()
+    tail = text[-tail_chars:].lstrip()
+    return f"{head}\n\n[... {omitted} chars condensed ...]\n\n{tail}"
 
 
 # ============================================================================
@@ -247,8 +282,9 @@ def resolve_llm_prompt(
 
     prompt = STEP_REF_DOT.sub(replace_dot, prompt)
 
-    # Step 4: Prepend anti-fabrication system instruction
-    prompt = SYNTHESIS_SYSTEM_INSTRUCTION + prompt
+    # Step 4: Prepend anti-fabrication instruction only if result tags are present
+    if "<result>" in prompt:
+        prompt = SYNTHESIS_SYSTEM_INSTRUCTION + prompt
 
     return prompt
 
@@ -274,11 +310,25 @@ def _build_labeled_block(
     elif trace_entry:
         tool_name = trace_entry.get("tool", "unknown")
 
-    # Format result text
+    # Smart response extraction:
+    # For text-rich tools, prefer the 'response' field over the full dict.
+    # This cuts noise and saves context window space for downstream nodes.
+    TEXT_RICH_TOOLS = {
+        "llm_caller", "code_agent", "code_assistant", "sub_agent",
+        "url_reader", "news_fetcher",
+    }
     result_data = trace_entry.get("result")
-    result_text = _format_result_text(result_data)
+    if tool_name in TEXT_RICH_TOOLS and isinstance(result_data, dict):
+        preferred = result_data.get("response") or result_data.get("content") or result_data.get("summary")
+        if preferred and isinstance(preferred, str) and len(preferred) > 20:
+            result_text = preferred  # use the clean text form directly
+        else:
+            result_text = _format_result_text(result_data)
+    else:
+        result_text = _format_result_text(result_data)
 
-    # Apply token budget truncation (Problem 6)
+    # Apply context condenser (head+tail) for large results, then budget truncation
+    result_text = condense_result(result_text, tool_name)
     result_text = truncate_to_budget(result_text, tool_name)
 
     header = f"[STEP {idx} - {tool_name}: {thought}]"

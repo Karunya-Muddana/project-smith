@@ -5,7 +5,7 @@ Pipeline:
     RAW QUERY
         │
         ▼
-    [KeywordOptimizer]  ← llama-3.1-8b-instant (Groq)
+    [KeywordOptimizer]  ← nvidia/nemotron-3-nano-30b-a3b (OpenRouter, free)
         │  Converts natural language → precise news search keywords
         ▼
     [DuckDuckGo News]   ← ddgs pip (free, no API key, no quota)
@@ -31,7 +31,7 @@ from typing import Any, Union
 
 import requests as http_requests
 from bs4 import BeautifulSoup
-from groq import Groq
+from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -43,8 +43,11 @@ logger = logging.getLogger(__name__)
 # CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-GROQ_API_KEY      = os.getenv("GROQ_API_KEY", "")
-KEYWORD_MODEL     = "llama-3.1-8b-instant"
+OPENROUTER_API_KEY = os.getenv(
+    "OPENROUTER_API_KEY",
+    "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",
+)
+KEYWORD_MODEL     = "nvidia/nemotron-3-nano-30b-a3b:free"
 
 TOP_N_DEFAULT     = 5
 BODY_MAX_CHARS    = 10_000     # hard-truncate anything longer
@@ -98,11 +101,14 @@ def optimize_keywords(raw_query: str) -> str:
     Rewrite raw user query into a clean news search keyword string.
     Returns raw query as fallback on any failure.
     """
-    if not GROQ_API_KEY or not raw_query.strip():
+    if not OPENROUTER_API_KEY or not raw_query.strip():
         return raw_query
 
     try:
-        client = Groq(api_key=GROQ_API_KEY)
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPENROUTER_API_KEY,
+        )
         response = client.chat.completions.create(
             model=KEYWORD_MODEL,
             messages=[

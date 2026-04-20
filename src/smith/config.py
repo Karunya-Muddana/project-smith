@@ -18,19 +18,27 @@ class SmithConfig(BaseSettings):
     # Safety
     require_approval: bool = Field(default=True, alias="SMITH_REQUIRE_APPROVAL")
 
-    # LLM Configuration - GROQ ONLY
+    # LLM Configuration - OpenRouter
     primary_model: str = Field(
-        default="llama-3.3-70b-versatile", alias="SMITH_LLM_MODEL"
+        default="nvidia/nemotron-3-nano-30b-a3b:free", alias="SMITH_LLM_MODEL"
     )
-    fallback_models: list[str] = ["llama3-70b-8192", "mixtral-8x7b-32768"]
+    fallback_models: list[str] = ["nvidia/nemotron-3-nano-30b-a3b:free"]
+
+    # Synthesis Router: model variants
+    synthesis_heavy_model: str = Field(
+        default="nvidia/nemotron-3-nano-30b-a3b:free", alias="SMITH_SYNTHESIS_HEAVY_MODEL"
+    )
+    synthesis_fast_model: str = Field(
+        default="nvidia/nemotron-3-nano-30b-a3b:free", alias="SMITH_SYNTHESIS_FAST_MODEL"
+    )
 
     # Concurrency
     max_workers: int = Field(default=10, alias="SMITH_MAX_WORKERS")
     max_concurrent_traces: int = Field(default=4, alias="SMITH_MAX_CONCURRENT_TRACES")
 
-    # Rate Limiting
-    groq_rpm: int = Field(default=30, alias="SMITH_GROQ_RPM")
-    groq_tpm: int = Field(default=40000, alias="SMITH_GROQ_TPM")
+    # Rate Limiting (generic)
+    api_rpm: int = Field(default=30, alias="SMITH_API_RPM")
+    api_tpm: int = Field(default=100000, alias="SMITH_API_TPM")
 
     # Resilience - FASTER RECOVERY
     llm_max_retries: int = Field(
@@ -49,6 +57,11 @@ class SmithConfig(BaseSettings):
     tool_lock_timeout: float = Field(default=30.0, alias="SMITH_TOOL_LOCK_TIMEOUT")
     enable_subagents: bool = Field(default=True, alias="SMITH_ENABLE_SUBAGENTS")
     enable_fleet_mode: bool = Field(default=True, alias="SMITH_ENABLE_FLEET_MODE")
+
+    # Run Cache / Warm Start
+    cache_enabled: bool = Field(default=True, alias="SMITH_CACHE_ENABLED")
+    cache_ttl_seconds: int = Field(default=3600, alias="SMITH_CACHE_TTL")
+    cache_dir: str = Field(default="~/.smith_cache", alias="SMITH_CACHE_DIR")
 
     class Config:
         env_file = ".env"
