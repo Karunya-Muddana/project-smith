@@ -1,11 +1,14 @@
 """
-WEB SEARCH v2 — DuckDuckGo + SearXNG Fallback
-================================================
+WEB SEARCH v2 — DuckDuckGo + SearXNG Fallback + NVIDIA Query Optimizer
+=======================================================================
 Pipeline:
     RAW QUERY
         │
         ▼
-    [QueryOptimizer]  ← nvidia/nemotron-3-nano-30b-a3b (OpenRouter, free)
+    [QueryOptimizer]  ← NVIDIA Inference API
+                         Endpoint: https://integrate.api.nvidia.com/v1/chat/completions
+                         Model default: meta/llama-4-maverick-17b-128e-instruct
+                         Requires NVIDIA_LLM_API_KEY
         │  Rewrites raw/vague query into precise search keywords
         ▼
     [DuckDuckGo]      ← via duckduckgo-search (pip, no API key)
@@ -14,14 +17,14 @@ Pipeline:
         ▼
     STRUCTURED RESULTS
 
-No API key needed. No quotas. Completely free.
+Note: Search backends require no API key, but the NVIDIA optimizer path does.
 """
 
 import os
 import re
 import logging
+import datetime
 from dotenv import load_dotenv
-from openai import OpenAI
 
 load_dotenv()
 
@@ -31,11 +34,16 @@ logger = logging.getLogger(__name__)
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-OPENROUTER_API_KEY = os.getenv(
-    "OPENROUTER_API_KEY",
-    "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",
+NVIDIA_LLM_API_KEY = os.getenv("NVIDIA_LLM_API_KEY", "")
+NVIDIA_INVOKE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+OPTIMIZER_MODEL  = os.getenv(
+    "SMITH_LLM_MODEL",
+    "meta/llama-4-maverick-17b-128e-instruct",
 )
-OPTIMIZER_MODEL  = "nvidia/nemotron-3-nano-30b-a3b:free"
+CURRENT_YEAR = datetime.date.today().year
+
+MAX_RESPONSE_CHARS = 24_000
+PER_RESULT_CONTENT_CHARS = 6_000
 
 # Optional: self-hosted SearXNG instance for JSON API (set in .env)
 SEARXNG_URL      = os.getenv("SEARXNG_URL", "")
@@ -45,26 +53,26 @@ SEARXNG_URL      = os.getenv("SEARXNG_URL", "")
 # STAGE 1 — QUERY OPTIMIZER (LLM sub-model)
 # ─────────────────────────────────────────────────────────────────────────────
 
-OPTIMIZER_SYSTEM_PROMPT = """You are a Search Query Specialist. Your ONLY job is to
+OPTIMIZER_SYSTEM_PROMPT = f"""You are a Search Query Specialist. Your ONLY job is to
 rewrite a user's raw search request into a single, highly optimised search string.
 
 Rules:
 - Output ONLY the final search string. No JSON, no prose, no explanations, no quotes.
 - Make it specific: include proper nouns, dates, event names, acronyms where relevant.
 - Keep it as a clean keyword string — no site: filters or special operators.
-- Include the current year (2025 or 2026) only if the topic is time-sensitive.
+- Include the current year ({CURRENT_YEAR}) only if the topic is time-sensitive.
 - Max 15 words total in the output string.
 - Do NOT include words like "fetch", "find me", "get", "search for", "I need" — output keywords only.
 
 Examples:
 Input:  "fetch me news about russia ukraine war nato"
-Output: Russia Ukraine war NATO ceasefire 2025
+Output: Russia Ukraine war NATO ceasefire {CURRENT_YEAR}
 
 Input:  "what is the stock price of apple"
-Output: Apple AAPL stock price today 2025
+Output: Apple AAPL stock price today {CURRENT_YEAR}
 
 Input:  "latest news on india elections"
-Output: India general elections 2025 results
+Output: India general elections {CURRENT_YEAR} results
 
 Input:  "how to setup a business in dubai from india"
 Output: Dubai business setup guide Indian entrepreneurs legal requirements
@@ -76,30 +84,39 @@ def optimize_query(raw_query: str) -> str:
     Rewrite the raw query into a precise search string using a fast LLM.
     Returns the original query as fallback on any failure.
     """
-    if not OPENROUTER_API_KEY:
-        logger.debug("[QueryOptimizer] No OPENROUTER_API_KEY — using raw query.")
+    if not NVIDIA_LLM_API_KEY:
+        logger.debug("[QueryOptimizer] No NVIDIA_LLM_API_KEY — using raw query.")
         return raw_query
 
     if not raw_query or not raw_query.strip():
         return raw_query
 
     try:
-        client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=OPENROUTER_API_KEY,
+        import requests as _req
+        resp = _req.post(
+            NVIDIA_INVOKE_URL,
+            headers={
+                "Authorization": f"Bearer {NVIDIA_LLM_API_KEY}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": OPTIMIZER_MODEL,
+                "messages": [
+                    {"role": "system", "content": OPTIMIZER_SYSTEM_PROMPT},
+                    {"role": "user",   "content": f"Rewrite this as a search query:\n{raw_query}"}
+                ],
+                "temperature": 0.2,
+                "max_tokens": 80,
+                "top_p": 0.9,
+                "frequency_penalty": 0.0,
+                "presence_penalty": 0.0,
+                "stream": False,
+            },
+            timeout=30,
         )
-        response = client.chat.completions.create(
-            model=OPTIMIZER_MODEL,
-            messages=[
-                {"role": "system", "content": OPTIMIZER_SYSTEM_PROMPT},
-                {"role": "user",   "content": f"Rewrite this as a search query:\n{raw_query}"}
-            ],
-            temperature=0.2,
-            max_tokens=80,
-            top_p=0.9,
-        )
-
-        optimized = response.choices[0].message.content.strip()
+        resp.raise_for_status()
+        optimized = (resp.json()["choices"][0]["message"]["content"] or "").strip()
         optimized = re.sub(r'^["\'\`]|["\'\`]$', "", optimized).strip()
 
         if not optimized or len(optimized) > 300:
@@ -253,11 +270,33 @@ def perform_search(query: str, num_results: int = 10, fetch_webpages: bool = Tru
         except Exception as e:
             logger.warning(f"Error fetching full webpages: {e}")
 
+    response_chunks = []
+    truncated = False
+    for r in results:
+        title = (r.get("title") or "").strip()
+        content = (r.get("content") or "").strip()
+        if not (title or content):
+            continue
+
+        if len(content) > PER_RESULT_CONTENT_CHARS:
+            content = content[:PER_RESULT_CONTENT_CHARS].rstrip() + "..."
+            truncated = True
+
+        response_chunks.append(f"{title}\n{content}" if title else content)
+
+    response_text = "\n\n".join(response_chunks)
+    if len(response_text) > MAX_RESPONSE_CHARS:
+        response_text = response_text[:MAX_RESPONSE_CHARS].rstrip() + "..."
+        truncated = True
+
     return {
         "status":     "success",
-        "result":     results,
+        "response":   response_text,
         "query_used": query,
         "engine":     engine,
+        "truncated": truncated,
+        "max_response_chars": MAX_RESPONSE_CHARS,
+        "per_result_content_chars": PER_RESULT_CONTENT_CHARS,
     }
 
 
@@ -292,7 +331,7 @@ METADATA = {
         "Uses DuckDuckGo as primary search engine — no API key needed. "
         "Optionally falls back to a self-hosted SearXNG instance if "
         "SEARXNG_URL is set in .env. "
-        "Includes an internal LLM query optimizer (Nemotron via OpenRouter) that "
+        "Includes an internal LLM query optimizer via NVIDIA Inference that "
         "automatically rewrites vague or natural-language queries into precise "
         "search strings. Pass raw user intent directly. "
         "Automatically fetches and extracts the full page text of the top 3 results "
@@ -354,6 +393,5 @@ if __name__ == "__main__":
         print(f"STATUS: {result['status']}")
         if result.get("error"):
             print(f"ERROR: {result['error']}")
-        for i, r in enumerate(result.get("result", []), 1):
-            print(f"  [{i}] {r['title']}")
-            print(f"       {r['link']}")
+        for i, r in enumerate(result.get("response", "").split("\n\n"), 1):
+            print(f"  [{i}] {r}")

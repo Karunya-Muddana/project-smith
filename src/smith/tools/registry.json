@@ -538,6 +538,32 @@
       "module": "smith.tools.WIKIPEDIA_LOOKUP"
     },
     {
+      "name": "deep_summarizer",
+      "description": "High-cost reasoning tool that transforms large, multi-source information into dense, insight-rich analysis. Use ONLY when multiple sources must be synthesized or when the query requires deep reasoning (cause-effect, implications, patterns). Avoid for simple queries or single-source data.",
+      "function": "run_deep_summarizer",
+      "dangerous": false,
+      "domain": "reasoning",
+      "output_type": "synthesis",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Aggregated text from multiple upstream steps (use {{STEPS.N.response}} to pass content)."
+          },
+          "query": {
+            "type": "string",
+            "description": "Original user query to guide reasoning and analysis."
+          }
+        },
+        "required": [
+          "text",
+          "query"
+        ]
+      },
+      "module": "smith.tools.DEEP_SUMMARIZER"
+    },
+    {
       "name": "gmail",
       "description": "Gmail integration: read inbox, read full email body, send emails, reply to threads, forward, star, mark read/unread, trash, and search using Gmail query syntax (e.g. 'from:boss@co.com is:unread'). Requires one-time OAuth2 browser authorization. Use message_id from read_inbox results to reference specific emails.",
       "function": "run_gmail_tool",
@@ -614,4 +640,5 @@
       "module": "smith.tools.GMAIL"
     }
   ]
+  
 }

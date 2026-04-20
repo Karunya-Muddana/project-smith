@@ -1,14 +1,15 @@
 """
-SMITH CLI - Professional Implementation
-----------------------------------------
-Rebuilt using Rich best practices for reliable progress tracking.
+SMITH CLI v4.0
+--------------
+Claude Code-inspired UI with /extend command for detailed re-synthesis.
 """
 
 import argparse
+import os
+import re
 import sys
 import time
 import json
-import uvicorn
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
@@ -21,13 +22,20 @@ from rich.progress import (
     SpinnerColumn,
     TextColumn,
     BarColumn,
-    TaskProgressColumn,
     TimeElapsedColumn,
 )
 from rich.prompt import Prompt
 from rich import box
 from rich.tree import Tree
 from rich.text import Text
+from rich.columns import Columns
+from rich.rule import Rule
+from rich.padding import Padding
+from rich.style import Style
+from rich.align import Align
+from rich.live import Live
+from rich.layout import Layout
+from rich.measure import Measurement
 
 # Smith imports
 from smith.core.orchestrator import smith_orchestrator
@@ -35,404 +43,700 @@ from smith.registry import list_tool_names
 from smith.core.cache_manager import CacheManager, get_cache_manager
 from smith.core.report_renderer import render_report
 
-# Separate consoles for output and errors
-console = Console()
-err_console = Console(stderr=True, style="red")
+console = Console(highlight=False)
+err_console = Console(stderr=True, style="bold red")
 
 # ============================================================================
-# BANNER
+# DESIGN TOKENS — Claude Code aesthetic
 # ============================================================================
 
-SMITH_BANNER = """
-[bold white]
+# Palette
+C_BRAND     = "bold white"
+C_PRIMARY   = "cyan"
+C_SUCCESS   = "green"
+C_ERROR     = "red"
+C_WARN      = "yellow"
+C_DIM       = "dim"
+C_ACCENT    = "bright_cyan"
+C_SUBTLE    = "bright_black"
+
+# Status symbols
+SYM_OK      = "✓"
+SYM_ERR     = "✗"
+SYM_SKIP    = "~"
+SYM_RUN     = "›"
+SYM_CACHE   = "⚡"
+SYM_TOOL    = "◆"
+SYM_THINK   = "◈"
+SYM_PLAN    = "◉"
+SYM_EXTEND  = "⟳"
+
+BANNER_ASCII = """\
   ███████╗███╗   ███╗██╗████████╗██╗  ██╗
   ██╔════╝████╗ ████║██║╚══██╔══╝██║  ██║
   ███████╗██╔████╔██║██║   ██║   ███████║
   ╚════██║██║╚██╔╝██║██║   ██║   ██╔══██║
   ███████║██║ ╚═╝ ██║██║   ██║   ██║  ██║
-  ╚══════╝╚═╝     ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝
-[/bold white]
-[dim]Zero-Trust Agent Runtime[/dim]
-"""
+  ╚══════╝╚═╝     ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝"""
 
 # ============================================================================
 # SESSION
 # ============================================================================
-
 
 class Session:
     def __init__(self):
         self.history: List[Dict[str, Any]] = []
         self.last_trace: List[Dict] = []
         self.last_dag: Dict = None
-        # Explain metadata
         self.last_explain_data: Dict[str, Any] = {}
+        self.last_raw_trace: List[Any] = []   # full orchestrator trace for /extend
+        self.last_nodes: List[Dict] = []       # DAG nodes for /extend
+        self.last_query: str = ""              # original query for /extend
 
     def add_interaction(self, user_input: str, response: str, trace: List[Dict] = None):
-        self.history.append(
-            {
-                "timestamp": datetime.now().isoformat(),
-                "user": user_input,
-                "assistant": response,
-                "trace": trace or [],
-            }
-        )
+        self.history.append({
+            "timestamp": datetime.now().isoformat(),
+            "user": user_input,
+            "assistant": response,
+            "trace": trace or [],
+        })
         if trace:
             self.last_trace = trace
+
+
+# ============================================================================
+# TIME-SENSITIVE CONTEXT HELPERS (unchanged logic, kept compact)
+# ============================================================================
+
+_TIME_SENSITIVE_HINTS = (
+    "stock","price","ticker","quote","market","nasdaq","nyse",
+    "crypto","bitcoin","ethereum","btc","eth",
+    "weather","temperature","forecast","humidity","wind",
+    "news","headline","breaking","latest",
+)
+_FOLLOW_UP_HINTS = ("what about","and what","and ","that one","same","again","it","that","those","continue","also")
+_REFRESH_HINTS   = ("refresh","latest","live","current","update","right now","as of now")
+
+def _is_time_sensitive_text(t): return any(h in (t or "").lower() for h in _TIME_SENSITIVE_HINTS)
+def _is_follow_up(t):
+    t = (t or "").strip().lower()
+    return len(t.split()) <= 5 or any(t.startswith(h) or f" {h} " in f" {t} " for h in _FOLLOW_UP_HINTS)
+def _asks_refresh(t): return any(h in (t or "").lower() for h in _REFRESH_HINTS)
+
+def _entry_age_seconds(entry):
+    try:
+        dt = datetime.fromisoformat(entry.get("timestamp",""))
+        return max(0.0, (datetime.now()-dt).total_seconds())
+    except: return None
+
+def _build_recent_context(session: Session, max_turns=3, max_chars=1200) -> str:
+    chunks, total = [], 0
+    for item in session.history[-max_turns:]:
+        age = _entry_age_seconds(item)
+        age_txt = f"~{int(age)}s ago" if age is not None else "recent"
+        block = f"[{age_txt}]\nUser: {(item.get('user') or '').strip()}\nSmith: {(item.get('assistant') or '').strip()}"
+        if total + len(block) > max_chars: break
+        chunks.append(block); total += len(block)
+    return "\n\n".join(chunks)
+
+def _maybe_answer_from_recent_time_sensitive_context(user_input, session):
+    if not session.history or _asks_refresh(user_input): return None
+    try:
+        from smith.config import config as _cfg
+        fresh_window = int(getattr(_cfg, "time_sensitive_fresh_seconds", 300))
+    except: fresh_window = 300
+    last = session.history[-1]
+    age = _entry_age_seconds(last)
+    if age is None or age > fresh_window: return None
+    if not _is_time_sensitive_text(f"{last.get('user','')} {last.get('assistant','')}"): return None
+    if not (_is_time_sensitive_text(user_input) or _is_follow_up(user_input)): return None
+    recent_context = _build_recent_context(session, max_turns=2, max_chars=900)
+    if not recent_context: return None
+    from smith.core.query_router import direct_answer
+    prompt = (
+        "Continue this conversation using ONLY the recent context below. "
+        "Do not claim you fetched new live data.\n\n"
+        f"Recent context:\n{recent_context}\n\nCurrent user follow-up: {user_input}"
+    )
+    return direct_answer(prompt, voice_mode=False) or None
+
+def _resolve_user_name():
+    n = os.getenv("SMITH_USER_NAME","").strip()
+    if n: return n
+    return os.getenv("USERNAME","").strip() or os.getenv("USER","").strip() or "there"
+
+def _build_startup_personalization():
+    user_name = _resolve_user_name()
+    default = f"Zero-Trust Agent Runtime v4.0 • Welcome back, {user_name}"
+    try:
+        from smith.config import config as _cfg
+        if not _cfg.memory_enabled: return default
+        from smith.memory import get_memory_manager
+        mem = get_memory_manager()
+        recent = mem.get_recent(1)
+        if not recent: return default
+        topic = re.sub(r"^User:\s*","", (recent[0].text or "").splitlines()[0].strip(), flags=re.IGNORECASE)[:70]
+        if topic: return f"Zero-Trust Agent Runtime v4.0 • Welcome back, {user_name} • Last topic: {topic}"
+    except: pass
+    return default
+
+
+# ============================================================================
+# UI PRIMITIVES — Claude Code style
+# ============================================================================
+
+def _status_row(status: str) -> tuple:
+    """Returns (icon, color) for a status string."""
+    return {
+        "success": (SYM_OK,   C_SUCCESS),
+        "error":   (SYM_ERR,  C_ERROR),
+        "skipped": (SYM_SKIP, C_WARN),
+        "pending": (SYM_RUN,  C_DIM),
+    }.get(status, (SYM_SKIP, C_DIM))
+
+def _divider(title: str = "", style: str = C_SUBTLE):
+    if title:
+        console.print(Rule(f" {title} ", style=style))
+    else:
+        console.print(Rule(style=style))
+
+def _badge(text: str, color: str = C_PRIMARY) -> Text:
+    t = Text()
+    t.append(f" {text} ", style=f"bold white on {color}")
+    return t
+
+def _tag(text: str, color: str = C_DIM) -> str:
+    return f"[{color}][{text}][/{color}]"
+
+
+# ============================================================================
+# BANNER
+# ============================================================================
+
+def print_banner():
+    subtitle = _build_startup_personalization()
+    banner_text = Text(BANNER_ASCII, style="bold white")
+    subtitle_text = Text(f"\n  {subtitle}", style="dim")
+    full = Text.assemble(banner_text, subtitle_text)
+    console.print(Panel(
+        Align.left(full),
+        border_style="bright_black",
+        box=box.HEAVY,
+        padding=(1, 2),
+    ))
+    console.print()
+    tips = [
+        f"[{C_DIM}]Ask naturally — follow-ups carry recent context[/{C_DIM}]",
+        f"[{C_DIM}]Say [cyan]refresh[/cyan] to force a live re-check[/{C_DIM}]",
+        f"[{C_DIM}]Run [cyan]/extend[/cyan] after any answer for a deep detailed report[/{C_DIM}]",
+        f"[{C_DIM}]Try [cyan]/help[/cyan] for all commands[/{C_DIM}]",
+    ]
+    for tip in tips:
+        console.print(f"  › {tip}")
+    console.print()
 
 
 # ============================================================================
 # COMMANDS
 # ============================================================================
 
-
 def cmd_help():
-    table = Table(title="Available Commands", border_style="cyan", box=box.ROUNDED)
-    table.add_column("Command", style="bold cyan", no_wrap=True)
+    _divider("Commands")
+    table = Table(
+        border_style=C_SUBTLE,
+        box=box.SIMPLE,
+        padding=(0, 2),
+        show_header=True,
+        header_style=f"bold {C_PRIMARY}",
+    )
+    table.add_column("Command", style=f"bold {C_PRIMARY}", no_wrap=True, min_width=24)
     table.add_column("Description", style="white")
 
-    table.add_row("/help", "Show this help message")
-    table.add_row("/tools", "List all available tools")
-    table.add_row("/trace", "Show execution trace of last run")
-    table.add_row("/dag", "Export last execution DAG as JSON")
-    table.add_row("/inspect", "Show ASCII flowchart of DAG and trace")
-    table.add_row("/explain", "Deep-dive analysis of last run (DAG, cache, tokens, cost)")
-    table.add_row("/history", "Show conversation history")
-    table.add_row("/export", "Export session to markdown file")
-    table.add_row("/cache", "Show cache statistics")
-    table.add_row("/cache clear", "Clear all cached tool results")
-    table.add_row("/serve", "Start the Smith Web UI Server")
-    table.add_row("/clear", "Clear the screen")
-    table.add_row("/quit, /exit", "Exit Smith")
+    sections = [
+        ("— Navigation", []),
+        ("/help",                "Show this help message"),
+        ("/clear",               "Clear the screen"),
+        ("/quit, /exit",         "Exit Smith"),
+        ("— Analysis", []),
+        ("/trace",               "Show execution trace of last run"),
+        ("/dag",                 "Export last execution DAG as JSON"),
+        ("/inspect",             "ASCII flowchart of DAG and trace"),
+        ("/explain",             "Deep-dive: DAG, cache, tokens, fabrication guard"),
+        ("/extend",              "Re-synthesize last run as a detailed report (no re-fetch)"),
+        ("— Data", []),
+        ("/tools",               "List all available tools"),
+        ("/cache",               "Show cache statistics"),
+        ("/cache clear",         "Clear all cached tool results"),
+        ("— Memory", []),
+        ("/memory",              "Show recent long-term memories"),
+        ("/memory search <q>",   "Semantic search over memory"),
+        ("/memory clear",        "Delete all stored memories"),
+        ("/memory stats",        "Show memory store statistics"),
+        ("— Session", []),
+        ("/history",             "Show conversation history"),
+        ("/export",              "Export session to markdown file"),
+        ("/activate-smith",      "Full-screen voice mode (STT + TTS)"),
+    ]
+
+    for item in sections:
+        if item[1] == []:
+            table.add_row(f"[dim]{item[0]}[/dim]", "")
+        else:
+            table.add_row(item[0], item[1])
 
     console.print(table)
 
 
 def cmd_tools():
     try:
-        tools = list_tool_names()
-        table = Table(title="Available Tools", border_style="green", box=box.ROUNDED)
-        table.add_column("#", style="dim", width=4)
-        table.add_column("Tool Name", style="bold cyan")
+        from smith.registry import get_tools_registry
+        tools = get_tools_registry()
+        _divider(f"Tools  [{C_DIM}]{len(tools)} registered[/{C_DIM}]")
 
-        for idx, tool in enumerate(tools, 1):
-            table.add_row(str(idx), tool)
+        # Two-column layout
+        left_tools = tools[:len(tools)//2 + len(tools)%2]
+        right_tools = tools[len(tools)//2 + len(tools)%2:]
 
-        console.print(table)
-        console.print(f"\n[dim]Total: {len(tools)} tools[/dim]")
+        def _tool_block(tool_list):
+            t = Table(box=None, padding=(0,1), show_header=False)
+            t.add_column("icon", width=2, style=C_PRIMARY)
+            t.add_column("name", style=f"bold {C_PRIMARY}", min_width=22)
+            t.add_column("domain", style=C_DIM, min_width=12)
+            t.add_column("desc", style="white", max_width=35)
+            for tool in tool_list:
+                icon = "⚠" if tool.get("dangerous") else SYM_TOOL
+                desc = (tool.get("description","").split(".")[0].strip())[:50]
+                t.add_row(icon, tool.get("name",""), tool.get("domain",""), desc)
+            return t
+
+        console.print(Columns([_tool_block(left_tools), _tool_block(right_tools)], equal=True, expand=True))
     except Exception as e:
         err_console.print(f"Error loading tools: {e}")
 
 
 def cmd_trace(session: Session):
     if not session.last_trace:
-        console.print("[yellow]No execution trace available yet.[/yellow]")
+        console.print(f"[{C_WARN}]No trace yet. Run a query first.[/{C_WARN}]")
         return
 
-    table = Table(title="Last Execution Trace", show_lines=True, box=box.ROUNDED)
-    table.add_column("Step", style="dim", width=6)
-    table.add_column("Tool", style="cyan")
-    table.add_column("Status", style="bold")
-    table.add_column("Duration", style="dim")
-    table.add_column("Cache", style="dim")
+    _divider("Execution Trace")
+    table = Table(box=box.SIMPLE, border_style=C_SUBTLE, show_lines=False, padding=(0,1))
+    table.add_column("",      width=2)
+    table.add_column("Step",  style=C_DIM, width=5)
+    table.add_column("Tool",  style=f"bold {C_PRIMARY}")
+    table.add_column("Status",style="bold")
+    table.add_column("Time",  style=C_DIM)
+    table.add_column("Cache", style=C_DIM)
 
     for step in session.last_trace:
-        status = step.get("status", "unknown")
-        status_icon = "✓" if status == "success" else "✗" if status == "error" else "~"
-        status_color = (
-            "green" if status == "success" else "red" if status == "error" else "yellow"
-        )
-        cache_icon = "⚡ HIT" if step.get("cache_hit") else "-"
-
+        status = step.get("status","unknown")
+        icon, color = _status_row(status)
+        cache = f"[{C_WARN}]{SYM_CACHE}[/{C_WARN}]" if step.get("cache_hit") else ""
         table.add_row(
-            str(step.get("step_index", "?")),
-            step.get("tool", "unknown"),
-            f"[{status_color}]{status_icon} {status}[/{status_color}]",
-            f"{step.get('duration', 0):.2f}s",
-            cache_icon,
+            f"[{color}]{icon}[/{color}]",
+            str(step.get("step_index","?")),
+            step.get("tool","unknown"),
+            f"[{color}]{status}[/{color}]",
+            f"{step.get('duration',0):.2f}s",
+            cache,
         )
-
     console.print(table)
 
 
 def cmd_dag(session: Session):
     if not session.last_dag:
-        console.print("[yellow]No DAG available. Run a query first.[/yellow]")
+        console.print(f"[{C_WARN}]No DAG available.[/{C_WARN}]")
         return
-
     filename = f"smith_dag_{int(time.time())}.json"
     try:
-        with open(filename, "w", encoding="utf-8") as f:
+        with open(filename,"w",encoding="utf-8") as f:
             json.dump(session.last_dag, f, indent=2, default=str)
-        console.print(f"[green]✓ DAG exported to {filename}[/green]")
+        console.print(f"[{C_SUCCESS}]{SYM_OK} DAG exported to {filename}[/{C_SUCCESS}]")
     except Exception as e:
         err_console.print(f"Export failed: {e}")
 
 
 def cmd_history(session: Session):
     if not session.history:
-        console.print("[yellow]No history yet.[/yellow]")
+        console.print(f"[{C_WARN}]No history yet.[/{C_WARN}]")
         return
-
+    _divider("Conversation History")
     for idx, item in enumerate(session.history, 1):
-        console.print(f"\n[bold cyan]#{idx}[/bold cyan] [dim]{item['timestamp']}[/dim]")
-        console.print(f"[green]You:[/green] {item['user']}")
-        console.print(f"[blue]Smith:[/blue] {item['assistant'][:200]}...")
+        console.print(f"\n[{C_SUBTLE}]#{idx}  {item['timestamp']}[/{C_SUBTLE}]")
+        console.print(f"[{C_SUCCESS}]You[/{C_SUCCESS}]    {item['user']}")
+        preview = (item['assistant'] or "")[:180].replace("\n"," ")
+        console.print(f"[{C_PRIMARY}]Smith[/{C_PRIMARY}]  {preview}{'…' if len(item['assistant'])>180 else ''}")
 
 
 def cmd_inspect(session: Session):
-    """Display ASCII flowchart of DAG and trace"""
     if not session.last_dag and not session.last_trace:
-        console.print("[yellow]No DAG or trace available. Run a query first.[/yellow]")
+        console.print(f"[{C_WARN}]No data. Run a query first.[/{C_WARN}]")
         return
 
-    console.print("\n[bold cyan]═══ EXECUTION FLOWCHART ═══[/bold cyan]\n")
+    _divider("Execution Flowchart")
+    nodes = (session.last_dag or {}).get("nodes", [])
 
-    # Show DAG structure if available
-    if session.last_dag:
-        nodes = session.last_dag.get("nodes", [])
-        edges = session.last_dag.get("edges", [])
-
-        console.print("[bold]DAG Structure:[/bold]")
-        console.print(f"  Nodes: {len(nodes)} | Edges: {len(edges)}\n")
-
-        # Build dependency map
-        dependencies = {}
-        for edge in edges:
-            target = edge.get("to")
-            source = edge.get("from")
-            if target not in dependencies:
-                dependencies[target] = []
-            dependencies[target].append(source)
-
-        # Create ASCII flowchart
+    if nodes:
+        console.print(f"  [{C_DIM}]DAG  {len(nodes)} nodes[/{C_DIM}]\n")
         for idx, node in enumerate(nodes):
-            node_id = node.get("id")
-            tool = node.get("tool", "unknown")
-
-            # Show dependencies
-            if node_id in dependencies:
-                deps = dependencies[node_id]
-                for dep in deps:
-                    dep_node = next((n for n in nodes if n.get("id") == dep), None)
-                    if dep_node:
-                        dep_tool = dep_node.get("tool", "unknown")
-                        console.print("       │")
-                        console.print(f"       ↓ [dim](from {dep_tool})[/dim]")
-
-            # Find status from trace
-            status_icon = "○"
-            status_color = "white"
-            duration = ""
-            error_msg = ""
-
-            if session.last_trace:
-                trace_entry = next(
-                    (t for t in session.last_trace if t.get("step_index") == idx), None
-                )
-                if trace_entry:
-                    status = trace_entry.get("status", "unknown")
-                    if status == "success":
-                        status_icon = "✓"
-                        status_color = "green"
-                    elif status == "error":
-                        status_icon = "✗"
-                        status_color = "red"
-                        result = trace_entry.get("result", {})
-                        if isinstance(result, dict):
-                            error_msg = f" - {result.get('error', 'Unknown error')}"
-                    else:
-                        status_icon = "~"
-                        status_color = "yellow"
-                    duration = f" ({trace_entry.get('duration', 0):.2f}s)"
-                    if trace_entry.get("cache_hit"):
-                        duration += " [⚡cache]"
-
-            console.print(
-                f"  [{status_color}]{status_icon}[/{status_color}]  [bold cyan]Step {idx}:[/bold cyan] {tool}{duration}{error_msg}"
-            )
-
+            t = next((x for x in session.last_trace if x.get("step_index")==idx), {})
+            status = t.get("status","pending")
+            icon, color = _status_row(status)
+            duration = f"  [{C_DIM}]{t.get('duration',0):.2f}s[/{C_DIM}]" if t else ""
+            cache = f"  [{C_WARN}]{SYM_CACHE} cached[/{C_WARN}]" if t.get("cache_hit") else ""
+            deps = node.get("depends_on") or []
+            dep_str = f"  [{C_SUBTLE}]← {deps}[/{C_SUBTLE}]" if deps else ""
+            console.print(f"  [{color}]{icon}[/{color}]  [bold {C_PRIMARY}]Step {idx}[/bold {C_PRIMARY}]  {node.get('tool','?')}{duration}{cache}{dep_str}")
+            thought = (node.get("thought","") or "")[:80]
+            if thought:
+                console.print(f"      [{C_DIM}]{thought}[/{C_DIM}]")
+            if idx < len(nodes)-1:
+                console.print(f"      [{C_SUBTLE}]│[/{C_SUBTLE}]")
     elif session.last_trace:
-        console.print("[bold]Execution Trace:[/bold]\n")
         for step in session.last_trace:
-            status = step.get("status", "unknown")
-            status_icon = (
-                "✓" if status == "success" else "✗" if status == "error" else "~"
-            )
-            status_color = (
-                "green"
-                if status == "success"
-                else "red" if status == "error" else "yellow"
-            )
+            status = step.get("status","unknown")
+            icon, color = _status_row(status)
+            console.print(f"  [{color}]{icon}[/{color}]  [{C_PRIMARY}]Step {step.get('step_index','?')}[/{C_PRIMARY}]  {step.get('tool','?')}  [{C_DIM}]{step.get('duration',0):.2f}s[/{C_DIM}]")
 
-            tool = step.get("tool", "unknown")
-            duration = step.get("duration", 0)
-
-            console.print(
-                f"  [{status_color}]{status_icon}[/{status_color}]  [bold]Step {step.get('step_index', '?')}:[/bold] {tool} ([dim]{duration:.2f}s[/dim])"
-            )
-
-    console.print("\n[dim]Use /trace for detailed results, /dag to export JSON[/dim]\n")
+    console.print(f"\n  [{C_DIM}]/trace for detailed results  /dag to export[/{C_DIM}]")
 
 
 def cmd_export(session: Session):
     if not session.history:
-        console.print("[yellow]Nothing to export.[/yellow]")
+        console.print(f"[{C_WARN}]Nothing to export.[/{C_WARN}]")
         return
-
     filename = f"smith_session_{int(time.time())}.md"
     try:
-        with open(filename, "w", encoding="utf-8") as f:
+        with open(filename,"w",encoding="utf-8") as f:
             f.write("# Smith Session Export\n\n")
-            f.write(
-                f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\\n\\n"
-            )
-            f.write("---\n\n")
-
-            for idx, item in enumerate(session.history, 1):
-                f.write(f"## Interaction {idx}\n\n")
-                f.write(f"**Timestamp:** {item['timestamp']}\\n\\n")
-                f.write(f"**User:** {item['user']}\\n\\n")
-                f.write(f"**Smith:** {item['assistant']}\\n\\n")
-                f.write("---\n\n")
-
-        console.print(f"[green]✓ Session exported to {filename}[/green]")
+            f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n---\n\n")
+            for idx, item in enumerate(session.history,1):
+                f.write(f"## {idx}. {item['timestamp']}\n\n")
+                f.write(f"**You:** {item['user']}\n\n")
+                f.write(f"**Smith:** {item['assistant']}\n\n---\n\n")
+        console.print(f"[{C_SUCCESS}]{SYM_OK} Exported to {filename}[/{C_SUCCESS}]")
     except Exception as e:
         err_console.print(f"Export failed: {e}")
 
 
 def cmd_cache(cache_mgr: CacheManager, subcmd: str = ""):
-    """Show cache statistics or clear cache."""
-    subcmd = subcmd.strip().lower()
-
-    if subcmd == "clear":
+    if subcmd.strip().lower() == "clear":
         n = cache_mgr.clear()
-        console.print(f"[green]✓ Cleared {n} cache entries.[/green]")
+        console.print(f"[{C_SUCCESS}]{SYM_OK} Cleared {n} cache entries.[/{C_SUCCESS}]")
         return
-
-    # Default: show stats
     stats = cache_mgr.stats()
-
-    table = Table(title="Run Cache Statistics", border_style="cyan", box=box.ROUNDED)
-    table.add_column("Metric", style="bold cyan")
-    table.add_column("Value", style="white")
-
-    table.add_row("Entries on Disk", str(stats["entries_on_disk"]))
-    table.add_row("Total Size", f"{stats['total_size_kb']} KB")
-    table.add_row("TTL", f"{stats['ttl_seconds']}s ({stats['ttl_seconds']//60} min)")
-    table.add_row("Cache Directory", stats["cache_dir"])
-    table.add_row("─── Session ───", "")
-    table.add_row("Hits", str(stats["session_hits"]))
-    table.add_row("Misses", str(stats["session_misses"]))
-    table.add_row("Stored", str(stats["session_sets"]))
+    _divider("Cache Statistics")
+    table = Table(box=box.SIMPLE, border_style=C_SUBTLE, padding=(0,2))
+    table.add_column("Metric", style=f"bold {C_PRIMARY}")
+    table.add_column("Value",  style="white")
     hit_rate = stats["session_hit_rate"]
-    hr_color = "green" if hit_rate >= 50 else "yellow" if hit_rate > 0 else "dim"
-    table.add_row("Hit Rate", f"[{hr_color}]{hit_rate}%[/{hr_color}]")
-
+    hr_color = C_SUCCESS if hit_rate >= 50 else C_WARN if hit_rate > 0 else C_DIM
+    rows = [
+        ("Entries on disk",  str(stats["entries_on_disk"])),
+        ("Total size",       f"{stats['total_size_kb']} KB"),
+        ("TTL",              f"{stats['ttl_seconds']}s"),
+        ("Session hits",     str(stats["session_hits"])),
+        ("Session misses",   str(stats["session_misses"])),
+        ("Hit rate",         f"[{hr_color}]{hit_rate}%[/{hr_color}]"),
+    ]
+    for k, v in rows: table.add_row(k, v)
     console.print(table)
 
 
+def cmd_memory(subcmd: str = ""):
+    from smith.config import config as _cfg
+    if not _cfg.memory_enabled:
+        console.print(f"[{C_WARN}]Memory disabled (SMITH_MEMORY_ENABLED=false)[/{C_WARN}]")
+        return
+    from smith.memory import get_memory_manager
+    mem = get_memory_manager()
+    subcmd = subcmd.strip()
+
+    if subcmd in ("","recent"):
+        records = mem.get_recent(10)
+        if not records:
+            console.print(f"[{C_DIM}]No memories stored yet.[/{C_DIM}]")
+            return
+        _divider("Recent Memories")
+        table = Table(box=box.SIMPLE, border_style=C_SUBTLE, padding=(0,1))
+        table.add_column("Date",    style=C_DIM,         width=19)
+        table.add_column("Session", style=C_PRIMARY,     width=9)
+        table.add_column("Type",    style=C_DIM,         width=12)
+        table.add_column("Preview", style="white")
+        for r in records:
+            dt = datetime.fromtimestamp(r.timestamp).strftime("%Y-%m-%d %H:%M")
+            table.add_row(dt, r.session_id, r.source_type, r.text[:110])
+        console.print(table)
+
+    elif subcmd.startswith("search "):
+        query = subcmd[7:].strip()
+        if not query:
+            console.print(f"[{C_WARN}]Usage: /memory search <query>[/{C_WARN}]"); return
+        results = mem.search(query, top_k=10)
+        if not results:
+            console.print(f"[{C_DIM}]No matching memories.[/{C_DIM}]"); return
+        _divider(f"Memory Search: {query}")
+        table = Table(box=box.SIMPLE, border_style=C_SUBTLE, padding=(0,1))
+        table.add_column("Score",   style=C_SUCCESS, width=7)
+        table.add_column("Date",    style=C_DIM,     width=19)
+        table.add_column("Type",    style=C_DIM,     width=12)
+        table.add_column("Preview", style="white")
+        for record, score in results:
+            dt = datetime.fromtimestamp(record.timestamp).strftime("%Y-%m-%d %H:%M")
+            table.add_row(f"{score:.3f}", dt, record.source_type, record.text[:110])
+        console.print(table)
+
+    elif subcmd == "clear":
+        n = mem.clear()
+        console.print(f"[{C_SUCCESS}]{SYM_OK} Cleared {n} memory records.[/{C_SUCCESS}]")
+
+    elif subcmd == "stats":
+        stats = mem.stats()
+        _divider("Memory Stats")
+        table = Table(box=box.SIMPLE, border_style=C_SUBTLE)
+        table.add_column("Metric", style=f"bold {C_PRIMARY}")
+        table.add_column("Value",  style="white")
+        for k, v in stats.items(): table.add_row(str(k), str(v))
+        console.print(table)
+
+    else:
+        console.print(f"[{C_WARN}]Usage: /memory [recent|search <q>|clear|stats][/{C_WARN}]")
+
+
 def cmd_explain(session: Session):
-    """Deep-dive analysis of the last run."""
     ed = session.last_explain_data
     if not ed:
-        console.print("[yellow]No run data available. Execute a query first.[/yellow]")
+        console.print(f"[{C_WARN}]No run data. Execute a query first.[/{C_WARN}]")
         return
 
-    console.print("\n[bold cyan]═══ RUN EXPLANATION ═══[/bold cyan]\n")
+    _divider("Run Explanation")
 
-    # ── DAG Overview ─────────────────────────────────────────────────────────
-    dag = ed.get("dag")
+    # ── DAG table ─────────────────────────────────────────────────────────
+    dag   = ed.get("dag")
     trace = ed.get("trace", [])
-    nodes = dag.get("nodes", []) if dag else []
+    nodes = (dag or {}).get("nodes", [])
 
-    dag_table = Table(title="DAG Overview", box=box.ROUNDED, border_style="blue")
-    dag_table.add_column("Step", style="dim", width=5)
-    dag_table.add_column("Tool", style="cyan")
-    dag_table.add_column("Status", style="bold")
-    dag_table.add_column("Duration", style="dim")
-    dag_table.add_column("Cache", style="dim")
-    dag_table.add_column("Thought", style="dim", max_width=40)
+    dag_table = Table(box=box.SIMPLE, border_style=C_SUBTLE, padding=(0,1))
+    dag_table.add_column("",      width=2)
+    dag_table.add_column("Step",  style=C_DIM, width=5)
+    dag_table.add_column("Tool",  style=f"bold {C_PRIMARY}")
+    dag_table.add_column("Status",style="bold")
+    dag_table.add_column("Time",  style=C_DIM)
+    dag_table.add_column("Cache", style=C_DIM)
+    dag_table.add_column("Thought",style=C_DIM, max_width=45)
 
     for i, node in enumerate(nodes):
-        t = next((x for x in trace if x.get("step_index") == i), {})
-        status = t.get("status", "pending")
-        sc = "green" if status == "success" else "red" if status == "error" else "yellow"
-        si = "✓" if status == "success" else "✗" if status == "error" else "~"
-        duration = f"{t.get('duration', 0):.2f}s"
-        cache_icon = "⚡ HIT" if t.get("cache_hit") else "-"
-        thought = (node.get("thought") or "")[:50]
-        dag_table.add_row(str(i), node.get("tool", "?"), f"[{sc}]{si} {status}[/{sc}]", duration, cache_icon, thought)
-
+        t = next((x for x in trace if x.get("step_index")==i), {})
+        status = t.get("status","pending")
+        icon, color = _status_row(status)
+        cache = f"{SYM_CACHE}" if t.get("cache_hit") else ""
+        dag_table.add_row(
+            f"[{color}]{icon}[/{color}]",
+            str(i),
+            node.get("tool","?"),
+            f"[{color}]{status}[/{color}]",
+            f"{t.get('duration',0):.2f}s",
+            cache,
+            (node.get("thought","") or "")[:45],
+        )
     console.print(dag_table)
 
-    # ── Parallel Groups ───────────────────────────────────────────────────────
-    parallel_groups = ed.get("parallel_groups", [])
+    # ── Parallel groups ────────────────────────────────────────────────────
+    parallel_groups = ed.get("parallel_groups",[])
     if parallel_groups:
-        pg_text = Text()
-        for i, group in enumerate(parallel_groups):
-            pg_text.append(f"  Group {i+1}: ", style="bold cyan")
-            pg_text.append(", ".join(group) + "\n")
-        console.print(Panel(pg_text, title="[bold cyan]⚡ Parallel Execution Groups[/bold cyan]", border_style="cyan"))
+        pg_lines = [f"  Group {i+1}: [{C_PRIMARY}]{', '.join(g)}[/{C_PRIMARY}]" for i, g in enumerate(parallel_groups)]
+        console.print(Panel("\n".join(pg_lines), title=f"[bold {C_PRIMARY}]⚡ Parallel Execution[/bold {C_PRIMARY}]", border_style=C_PRIMARY, box=box.SIMPLE))
 
-    # ── Cache Hits ───────────────────────────────────────────────────────────
-    cache_hits = ed.get("cache_hits", [])
-    hit_count = len(cache_hits)
+    # ── Cache ──────────────────────────────────────────────────────────────
+    cache_hits = ed.get("cache_hits",[])
     total_nodes = len(nodes)
     if total_nodes > 0:
-        hit_pct = round(hit_count / total_nodes * 100, 1)
-        color = "green" if hit_pct > 50 else "yellow" if hit_pct > 0 else "dim"
+        hit_pct = round(len(cache_hits)/total_nodes*100, 1)
+        color = C_SUCCESS if hit_pct > 50 else C_WARN if hit_pct > 0 else C_DIM
         console.print(Panel(
-            Text(f"  {hit_count}/{total_nodes} steps served from cache ({hit_pct}%)\n  Steps: {cache_hits if cache_hits else 'none'}", justify="left"),
-            title=f"[bold {color}]⚡ Cache Performance[/bold {color}]",
-            border_style=color,
+            f"  [{color}]{len(cache_hits)}/{total_nodes} steps from cache ({hit_pct}%)[/{color}]\n  Steps: {cache_hits or 'none'}",
+            title=f"[bold {C_WARN}]⚡ Cache[/bold {C_WARN}]", border_style=C_SUBTLE, box=box.SIMPLE,
         ))
 
-    # ── Token Budget ─────────────────────────────────────────────────────────
-    total_tokens_est = ed.get("total_tokens_est", 0)
-    total_cost_est = ed.get("total_cost_est", 0.0)
-    tok_table = Table(title="Token & Cost Estimate", box=box.SIMPLE, border_style="magenta")
-    tok_table.add_column("Metric", style="magenta")
-    tok_table.add_column("Value", style="white")
-    tok_table.add_row("Est. Tokens (trace)", f"~{total_tokens_est:,}")
-    tok_table.add_row("Est. Synthesis Cost", f"~${total_cost_est:.4f}")
+    # ── Tokens ────────────────────────────────────────────────────────────
+    tokens = ed.get("total_tokens_est",0)
+    cost   = ed.get("total_cost_est",0.0)
+    tok_table = Table(box=box.SIMPLE, border_style=C_SUBTLE, padding=(0,2))
+    tok_table.add_column("Metric", style=f"bold {C_PRIMARY}")
+    tok_table.add_column("Value",  style="white")
+    tok_table.add_row("Est. Tokens (trace)", f"~{tokens:,}")
+    tok_table.add_row("Est. Synthesis Cost", f"~${cost:.4f}")
     console.print(tok_table)
 
-    # ── Fabrication Guard ────────────────────────────────────────────────────
-    fab_report = ed.get("fabrication_report")
-    if fab_report:
-        total_n = fab_report.get("total_numbers", 0)
-        verified_n = fab_report.get("verified", 0)
-        redacted_n = fab_report.get("redacted", 0)
-        confidence = ed.get("confidence", "high")
-        conf_color = "green" if confidence == "high" else "yellow" if confidence == "medium" else "red"
-        fab_text = Text()
-        fab_text.append(f"  Numbers found: {total_n}  |  Verified: ", style="white")
-        fab_text.append(str(verified_n), style="green")
-        fab_text.append("  |  Redacted: ", style="white")
-        fab_text.append(str(redacted_n), style="red" if redacted_n > 0 else "dim")
-        fab_text.append(f"\n  Confidence: ", style="white")
-        fab_text.append(confidence.upper(), style=f"bold {conf_color}")
-        console.print(Panel(fab_text, title="[bold yellow]🛡 Fabrication Guard[/bold yellow]", border_style="yellow"))
+    # ── Fabrication guard ─────────────────────────────────────────────────
+    fab = ed.get("fabrication_report")
+    if fab:
+        total_n   = fab.get("total_numbers",0)
+        verified  = fab.get("verified",0)
+        redacted  = fab.get("redacted",0)
+        confidence = ed.get("confidence","high")
+        conf_color = C_SUCCESS if confidence=="high" else C_WARN if confidence=="medium" else C_ERROR
+        fab_line = (
+            f"  Numbers: {total_n}  ·  Verified: [{C_SUCCESS}]{verified}[/{C_SUCCESS}]  ·  "
+            f"Redacted: [{'red' if redacted else C_DIM}]{redacted}[/{'red' if redacted else C_DIM}]\n"
+            f"  Confidence: [{conf_color}]{confidence.upper()}[/{conf_color}]"
+        )
+        console.print(Panel(fab_line, title=f"[bold {C_WARN}]🛡 Fabrication Guard[/bold {C_WARN}]", border_style=C_SUBTLE, box=box.SIMPLE))
 
-    # ── Audit Trail ──────────────────────────────────────────────────────────
-    audit_trail = ed.get("audit_trail", [])
-    if audit_trail:
-        at_table = Table(title="Finance Audit Trail", box=box.SIMPLE, border_style="green")
-        at_table.add_column("Symbol", style="cyan")
-        at_table.add_column("Verified Price", style="white")
-        at_table.add_column("Currency", style="dim")
-        for entry in audit_trail:
-            at_table.add_row(entry.get("symbol", "?"), str(entry.get("verified_price", "?")), entry.get("currency", "USD"))
-        console.print(at_table)
+
+# ============================================================================
+# /extend — Re-synthesize with detailed report prompt
+# ============================================================================
+
+def cmd_extend(session: Session):
+    """
+    Re-synthesize the last run as a detailed analytical report.
+    Bypasses run_synthesis() entirely — calls call_llm directly so the
+    synthesis engine format_type detection cannot override the prompt.
+    No data tools re-run.
+    """
+    if not session.last_raw_trace or not session.last_query:
+        console.print(f"[{C_WARN}]Nothing to extend. Run a query first.[/{C_WARN}]")
+        return
 
     console.print()
+    console.print(Panel(
+        f"  [{C_PRIMARY}]{SYM_EXTEND}  Generating detailed report...[/{C_PRIMARY}]\n"
+        f"  [{C_DIM}]No data tools will re-run. Using cached trace.[/{C_DIM}]",
+        border_style=C_PRIMARY,
+        box=box.SIMPLE,
+    ))
+
+    try:
+        from smith.tools.LLM_CALLER import call_llm
+
+        # Extract all text content from stored trace
+        source_blocks = []
+        for i, t in enumerate(session.last_raw_trace):
+            if not t or t.get("status") != "success":
+                continue
+            result = t.get("result", {})
+            tool   = t.get("tool", f"step_{i}")
+            text   = ""
+            if isinstance(result, dict):
+                for k in ("response", "content", "summary", "text", "body"):
+                    v = result.get(k)
+                    if v and isinstance(v, str) and len(v) > 30:
+                        text = v; break
+                if not text:
+                    articles = result.get("articles", [])
+                    if isinstance(articles, list):
+                        parts = []
+                        for a in articles[:5]:
+                            if isinstance(a, dict):
+                                title = a.get("title", "")
+                                body  = a.get("body", "") or a.get("snippet", "")
+                                if title or body:
+                                    parts.append(f"{title}\n{body}".strip())
+                        text = "\n\n".join(parts)
+                if not text:
+                    text = json.dumps(result, default=str)[:3000]
+            else:
+                text = str(result)[:3000]
+
+            if text.strip():
+                thought = ""
+                if i < len(session.last_nodes):
+                    thought = session.last_nodes[i].get("thought", "")
+                source_blocks.append(
+                    f"--- SOURCE: {tool.upper()} (step {i}) ---\n"
+                    f"Purpose: {thought}\n\n"
+                    f"{text.strip()[:8000]}"
+                )
+
+        if not source_blocks:
+            err_console.print("No usable data found in trace for /extend.")
+            return
+
+        combined_data = "\n\n".join(source_blocks)
+        if len(combined_data) > 50_000:
+            combined_data = combined_data[:50_000] + "\n\n[...truncated]"
+
+        prompt = f"""You are a senior analyst producing a comprehensive research report.
+
+USER QUERY: {session.last_query}
+
+SOURCE DATA FROM RESEARCH TOOLS:
+{combined_data}
+
+INSTRUCTIONS:
+Write a detailed, professional analytical report using ONLY the source data above.
+Structure your report with these exact sections:
+
+## Executive Summary
+3-5 sentences capturing the most important findings.
+
+## Detailed Findings
+Expand every key data point with full context and evidence. Include specific numbers, dates, names. Do not summarize — elaborate fully.
+
+## Cause → Effect Analysis
+Explicit chain reasoning. Format as:
+- [Cause] → [Effect] → [Implication]
+Write at least 4-5 chains covering different aspects.
+
+## Comparative Analysis
+Side-by-side breakdown of the main entities covering: strategy, execution, financials, market position, risks.
+
+## Key Patterns & Non-Obvious Signals
+What patterns emerge that are not immediately obvious? What is the data NOT saying that is significant?
+
+## Strategic Implications
+What does this mean for investors, competitors, and the industry over the next 6-18 months? Be specific.
+
+## Confidence & Data Gaps
+What data was missing or weak? What would change this analysis?
+
+RULES:
+- Use ONLY facts from the source data above. Do not invent statistics.
+- Be specific — replace every vague statement with exact figures from the data.
+- Write in professional analytical prose. No padding.
+- Each section must be substantive — minimum 2 full paragraphs.
+"""
+
+        response_text = ""
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task(f"[{C_PRIMARY}]{SYM_EXTEND} Writing report...", total=None)
+            result = call_llm(prompt, model="meta/llama-4-maverick-17b-128e-instruct")
+
+        if result.get("status") == "success":
+            response_text = result.get("response", "").strip()
+        else:
+            err_console.print(f"LLM call failed: {result.get('error', 'unknown')}")
+            return
+
+        if not response_text:
+            err_console.print("Model returned empty response.")
+            return
+
+        console.print()
+        _divider("Extended Report")
+        console.print(Markdown(response_text))
+        console.print()
+        session.add_interaction(f"/extend → {session.last_query}", response_text)
+
+    except ImportError as e:
+        err_console.print(f"Missing module for /extend: {e}")
+    except Exception as e:
+        err_console.print(f"/extend failed: {e}")
+        if os.getenv("SMITH_DEBUG"):
+            import traceback; traceback.print_exc()
+
 
 
 # ============================================================================
 # QUERY EXECUTION
 # ============================================================================
-
 
 def execute_query(
     user_input: str,
@@ -440,421 +744,307 @@ def execute_query(
     verify_finance: bool = False,
     cache_mgr: Optional[CacheManager] = None,
 ) -> str:
-    """Execute query with proper progress tracking"""
+    from smith.core.query_router import classify, direct_answer
 
-    trace_data = []
-    final_answer = ""
-    dag_plan = None
-    total_steps = 0
-    final_payload: Dict[str, Any] = {}
+    reused = None
+    if not verify_finance:
+        reused = _maybe_answer_from_recent_time_sensitive_context(user_input, session)
+    if reused:
+        return reused
 
-    # Create progress tracker
+    try:
+        from smith.config import config as _cfg
+        context_turns = int(getattr(_cfg,"conversation_context_turns",3))
+    except: context_turns = 3
+
+    recent_context = _build_recent_context(session, max_turns=context_turns)
+    routed_input = user_input
+    if recent_context:
+        routed_input = (
+            "[Recent conversation context]\n"
+            f"{recent_context}\n"
+            "[End recent conversation context]\n\n"
+            f"Current user query: {user_input}"
+        )
+
+    # ── Fast path ────────────────────────────────────────────────────────────
+    if not verify_finance and classify(user_input) == "direct":
+        with Progress(
+            SpinnerColumn(),
+            TextColumn(f"[{C_PRIMARY}]{SYM_THINK} Thinking…"),
+            console=console, transient=True,
+        ) as progress:
+            progress.add_task("", total=None)
+            answer = direct_answer(routed_input, voice_mode=False)
+        if answer:
+            return answer
+
+    # ── Full pipeline ─────────────────────────────────────────────────────────
+    trace_data: List[Dict]    = []
+    raw_trace:  List[Any]     = []
+    final_answer: str         = ""
+    dag_plan: Dict            = None
+    total_steps: int          = 0
+    final_payload: Dict       = {}
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
+        BarColumn(bar_width=38, style=C_SUBTLE, complete_style=C_PRIMARY),
         TimeElapsedColumn(),
         console=console,
         transient=False,
     ) as progress:
-        # Main task
-        main_task = progress.add_task("[cyan]Processing...", total=None)
+        main_task = progress.add_task(f"[{C_DIM}]Initializing planner...", total=None)
 
-        # Execute orchestrator
         for event in smith_orchestrator(
             user_input,
             require_approval=False,
             verify_finance=verify_finance,
             cache_manager=cache_mgr,
+            recent_context=recent_context,
         ):
-            event_type = event.get("type")
+            etype = event.get("type")
 
-            if event_type == "status":
-                msg = event.get("message", "")
-                progress.update(main_task, description=f"[cyan]{msg}")
+            if etype == "status":
+                msg = event.get("message","")
+                progress.update(main_task, description=f"[{C_DIM}]{msg}")
 
-            elif event_type == "plan_created":
-                dag_plan = event.get("plan")
-                nodes = dag_plan.get("nodes", []) if dag_plan else []
+            elif etype == "plan_created":
+                dag_plan    = event.get("plan")
+                nodes       = (dag_plan or {}).get("nodes",[])
                 total_steps = len(nodes)
-                progress.update(
-                    main_task,
-                    description=f"[green]✓ Plan created ({total_steps} steps)",
-                    total=total_steps,
-                    completed=0,
-                )
+                progress.update(main_task,
+                    description=f"[{C_SUCCESS}]{SYM_PLAN} Plan ready [{C_DIM}]{total_steps} steps[/{C_DIM}]",
+                    total=total_steps, completed=0)
 
-            elif event_type == "step_start":
-                step_idx = event.get("step_index", 0)
-                tool = event.get("tool", "unknown")
-                progress.update(
-                    main_task,
-                    description=f"[bold]→ Step {step_idx + 1}/{total_steps}:[/bold] [cyan]{tool}[/cyan]",
-                    completed=step_idx,
-                )
+            elif etype == "step_start":
+                idx  = event.get("step_index",0)
+                tool = event.get("tool","?")
+                progress.update(main_task,
+                    description=f"[bold]→ Step {idx+1}/{total_steps}:[/bold] [{C_PRIMARY}]{tool}[/{C_PRIMARY}]",
+                    completed=idx)
 
-            elif event_type == "step_complete":
-                step_idx = event.get("step_index", 0)
-                tool = event.get("tool")
-                status = event.get("status")
-                duration = event.get("duration", 0)
-                cache_hit = event.get("cache_hit", False)
+            elif etype == "step_complete":
+                idx      = event.get("step_index",0)
+                status   = event.get("status","?")
+                icon, color = _status_row(status)
+                cache    = f" {SYM_CACHE}" if event.get("cache_hit") else ""
+                progress.update(main_task,
+                    description=f"[{color}]{icon}[/{color}] [{C_PRIMARY}]{event.get('tool','?')}[/{C_PRIMARY}]{cache}  [{C_DIM}]{event.get('duration',0):.1f}s[/{C_DIM}]",
+                    completed=idx+1)
+                trace_data.append({
+                    "step_index": idx,
+                    "tool":       event.get("tool"),
+                    "status":     status,
+                    "duration":   event.get("duration",0),
+                    "cache_hit":  event.get("cache_hit",False),
+                    "result":     event.get("payload"),
+                })
 
-                # Update progress
-                progress.update(main_task, completed=step_idx + 1)
+            elif etype == "final_answer":
+                final_payload = event.get("payload",{})
+                final_answer  = final_payload.get("response", str(final_payload)) if isinstance(final_payload,dict) else str(final_payload)
+                progress.update(main_task,
+                    description=f"[{C_SUCCESS}]{SYM_OK} Complete",
+                    completed=total_steps)
 
-                # Track trace
-                trace_data.append(
-                    {
-                        "step_index": step_idx,
-                        "tool": tool,
-                        "status": status,
-                        "duration": duration,
-                        "cache_hit": cache_hit,
-                        "result": event.get("payload"),
-                    }
-                )
+            elif etype == "error":
+                progress.update(main_task, description=f"[{C_ERROR}]{SYM_ERR} {event.get('message','error')}")
 
-            elif event_type == "final_answer":
-                final_payload = event.get("payload", {})
-                if isinstance(final_payload, dict):
-                    final_answer = final_payload.get("response", str(final_payload))
-                else:
-                    final_answer = str(final_payload)
-                progress.update(
-                    main_task, description="[green]✓ Complete", completed=total_steps
-                )
+    # ── Store for /extend ────────────────────────────────────────────────────
+    # We need the raw orchestrator trace (with full result dicts)
+    # Build it from trace_data (result field has the full payload)
+    raw_trace = [
+        {
+            "step_index": t["step_index"],
+            "tool":       t["tool"],
+            "status":     t["status"],
+            "duration":   t["duration"],
+            "result":     t["result"],
+        }
+        for t in trace_data
+    ]
 
-            elif event_type == "error":
-                error_msg = event.get("message", "Unknown error")
-                progress.update(
-                    main_task, description=f"[red]✗ Error:[/red] {error_msg}"
-                )
+    session.last_trace      = trace_data
+    session.last_dag        = dag_plan
+    session.last_raw_trace  = raw_trace
+    session.last_nodes      = (dag_plan or {}).get("nodes",[])
+    session.last_query      = user_input
 
-    # Save to session
-    session.last_trace = trace_data
-    session.last_dag = dag_plan
-
-    # ── Build explain metadata ────────────────────────────────────────────────
-    # Detect parallel groups (nodes that share no dependencies)
-    parallel_groups: List[List[str]] = []
+    # ── Explain metadata ─────────────────────────────────────────────────────
+    parallel_groups = []
     if dag_plan:
-        nodes_list = dag_plan.get("nodes", [])
-        _seen: set = set()
-        for node in nodes_list:
-            deps = node.get("_normalized_deps") or node.get("depends_on") or []
-            if not deps and node.get("id") not in _seen:
-                # Root node — could be parallel if multiple roots exist
-                # Simplified: group by same dep set
-                parallel_groups.append([node.get("tool", "?")])
-                _seen.add(node.get("id"))
+        nodes = dag_plan.get("nodes", [])
+        if nodes:
+            in_degree = [0] * len(nodes)
+            adjacency: Dict[int, List[int]] = {i: [] for i in range(len(nodes))}
 
-    # Estimate tokens in trace
-    trace_chars = sum(len(str(t.get("result", {}))) for t in trace_data)
+            for idx, node in enumerate(nodes):
+                deps = node.get("_normalized_deps") or node.get("depends_on") or []
+                if not isinstance(deps, list):
+                    deps = []
+
+                valid_deps = [
+                    dep for dep in deps
+                    if isinstance(dep, int) and 0 <= dep < len(nodes)
+                ]
+                in_degree[idx] = len(valid_deps)
+                for dep in valid_deps:
+                    adjacency[dep].append(idx)
+
+            ready = [idx for idx, degree in enumerate(in_degree) if degree == 0]
+            processed = 0
+
+            while ready:
+                level = sorted(ready)
+                parallel_groups.append([nodes[i].get("tool", "?") for i in level])
+                processed += len(level)
+
+                next_ready: List[int] = []
+                for parent in level:
+                    for child in adjacency.get(parent, []):
+                        in_degree[child] -= 1
+                        if in_degree[child] == 0:
+                            next_ready.append(child)
+
+                ready = next_ready
+
+            # Handle malformed cyclic plans defensively.
+            if processed < len(nodes):
+                remaining = [
+                    idx for idx, degree in enumerate(in_degree) if degree > 0
+                ]
+                if remaining:
+                    parallel_groups.append([nodes[i].get("tool", "?") for i in remaining])
+
+    trace_chars      = sum(len(str(t.get("result",{}))) for t in trace_data)
     total_tokens_est = trace_chars // 4
-
-    # Rough cost estimate (Groq is ~$0.00027 / 1k tokens for 70b, free-tier proxy)
-    total_cost_est = (total_tokens_est / 1000) * 0.00027
+    total_cost_est   = (total_tokens_est / 1000) * 0.00027
 
     session.last_explain_data = {
-        "dag": dag_plan,
-        "trace": trace_data,
-        "parallel_groups": parallel_groups,
-        "cache_hits": final_payload.get("cache_hits", []),
-        "total_tokens_est": total_tokens_est,
-        "total_cost_est": total_cost_est,
-        "fabrication_report": final_payload.get("fabrication_report"),
-        "confidence": final_payload.get("confidence", "high"),
-        "audit_trail": final_payload.get("audit_trail", []),
+        "dag":               dag_plan,
+        "trace":             trace_data,
+        "parallel_groups":   parallel_groups,
+        "cache_hits":        final_payload.get("cache_hits",[]),
+        "total_tokens_est":  total_tokens_est,
+        "total_cost_est":    total_cost_est,
+        "fabrication_report":final_payload.get("fabrication_report"),
+        "confidence":        final_payload.get("confidence","high"),
+        "audit_trail":       final_payload.get("audit_trail",[]),
     }
 
     return final_answer
-
-
-def cmd_fleet(user_input: str, session: Session):
-    """Handle /fleet command to activate fleet mode"""
-    from smith.core.fleet_coordinator import get_fleet_coordinator
-    from smith.config import config
-    from rich.prompt import IntPrompt
-
-    # Check if fleet mode is enabled
-    if not config.enable_fleet_mode:
-        console.print("[yellow]⚠ Fleet mode is disabled in configuration[/yellow]")
-        return
-
-    # Extract goal from command
-    parts = user_input.split(maxsplit=1)
-    if len(parts) < 2:
-        console.print("[yellow]Usage: /fleet <goal>[/yellow]")
-        console.print("[dim]Example: /fleet Analyze the top 5 tech stocks[/dim]")
-        return
-
-    goal = parts[1].strip()
-
-    # Ask for number of agents
-    try:
-        num_agents = IntPrompt.ask(
-            f"[cyan]How many agents?[/cyan] (1-{config.max_fleet_size})", default=3
-        )
-
-        if num_agents < 1 or num_agents > config.max_fleet_size:
-            console.print(
-                f"[red]Number of agents must be between 1 and {config.max_fleet_size}[/red]"
-            )
-            return
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Fleet mode cancelled[/yellow]")
-        return
-
-    # Run fleet
-    console.print(
-        f"\n[bold cyan]🚀 Launching fleet of {num_agents} agents...[/bold cyan]\n"
-    )
-
-    coordinator = get_fleet_coordinator()
-    result = coordinator.run_fleet(goal, num_agents)
-
-    # Display results
-    if result.get("status") == "success":
-        console.print("\n[bold green]✓ Fleet completed successfully![/bold green]\n")
-
-        # Show sub-tasks
-        console.print("[bold]Sub-tasks assigned:[/bold]")
-        for i, task in enumerate(result.get("sub_tasks", [])):
-            console.print(f"  {i + 1}. {task}")
-
-        # Show final result
-        console.print("\n[bold]Final Result:[/bold]")
-        final_result = result.get("final_result", "No result")
-        console.print(Panel(Markdown(final_result), border_style="green"))
-
-        # Add to session
-        session.add_interaction(user_input, final_result)
-    else:
-        error = result.get("error", "Unknown error")
-        console.print(f"\n[red]✗ Fleet failed: {error}[/red]")
-
-
-def cmd_subagents():
-    """Show active sub-agents hierarchy"""
-    from smith.core.agent_state import get_state_manager
-
-    state_mgr = get_state_manager()
-    stats = state_mgr.get_stats()
-
-    # Show statistics
-    console.print("\n[bold]Agent Statistics:[/bold]")
-    table = Table(box=box.ROUNDED)
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="white")
-
-    table.add_row("Total Agents", str(stats.get("total_agents", 0)))
-    table.add_row("Active Agents", str(stats.get("active_agents", 0)))
-    table.add_row("Root Agents", str(stats.get("root_agents", 0)))
-
-    console.print(table)
-
-    # Show agent tree
-    root_agents = state_mgr.get_root_agents()
-
-    if not root_agents:
-        console.print("\n[dim]No active agents[/dim]")
-        return
-
-    console.print("\n[bold]Agent Hierarchy:[/bold]\n")
-
-    for root in root_agents:
-        tree = Tree(f"[bold cyan]{root.agent_id}[/bold cyan] - {root.task[:50]}...")
-        _build_agent_tree(tree, root, state_mgr)
-        console.print(tree)
-
-
-def _build_agent_tree(tree, agent, state_mgr):
-    """Recursively build agent tree for display"""
-    children = state_mgr.get_children(agent.agent_id)
-
-    for child in children:
-        status_icon = {
-            "initializing": "⏳",
-            "running": "▶",
-            "completed": "✓",
-            "failed": "✗",
-            "cancelled": "⊘",
-        }.get(child.status.value, "?")
-
-        status_color = {
-            "initializing": "yellow",
-            "running": "cyan",
-            "completed": "green",
-            "failed": "red",
-            "cancelled": "dim",
-        }.get(child.status.value, "white")
-
-        branch = tree.add(
-            f"[{status_color}]{status_icon}[/{status_color}] "
-            f"[bold]{child.agent_id}[/bold] - {child.task[:40]}..."
-        )
-
-        # Recursively add children
-        _build_agent_tree(branch, child, state_mgr)
 
 
 # ============================================================================
 # MAIN REPL
 # ============================================================================
 
-
-def print_banner():
-    console.print(
-        Panel(
-            SMITH_BANNER + "\n" + "[dim]Zero-Trust Agent Runtime v3.0[/dim]",
-            border_style="blue",
-            box=box.DOUBLE,
-            padding=(1, 2),
-        )
-    )
-
-    console.print("\n[bold white]Tips for getting started:[/bold white]")
-    console.print("  1. Ask questions, run analysis, or fetch data")
-    console.print("  2. Be specific for the best results")
-    console.print("  3. Try [cyan]/help[/cyan] for more information\n")
-
-
 def main():
-    """Main CLI loop"""
-    # Parse args
     parser = argparse.ArgumentParser(description="Smith Agent Runtime")
-    parser.add_argument("--verify-finance", action="store_true", help="Enable finance audit trail in responses")
-    parser.add_argument("--no-cache", action="store_true", help="Disable the run cache for this session")
-    parser.add_argument("--debug", action="store_true", help="Enable debug output")
+    parser.add_argument("--verify-finance", action="store_true")
+    parser.add_argument("--no-cache",       action="store_true")
+    parser.add_argument("--debug",          action="store_true")
     args, _ = parser.parse_known_args()
 
-    verify_finance = args.verify_finance
-    use_cache = not args.no_cache
+    if args.debug:
+        os.environ["SMITH_DEBUG"] = "1"
 
     console.clear()
     print_banner()
 
-    if verify_finance:
-        console.print("[bold yellow]⚠ Finance verification mode enabled — audit trails will be shown[/bold yellow]\n")
-    if not use_cache:
-        console.print("[dim]Cache disabled for this session[/dim]\n")
+    if args.verify_finance:
+        console.print(f"[bold {C_WARN}]⚠ Finance verification mode enabled[/bold {C_WARN}]\n")
+    if args.no_cache:
+        console.print(f"[{C_DIM}]Cache disabled for this session[/{C_DIM}]\n")
 
-    # Initialise cache
     cache_mgr: Optional[CacheManager] = None
-    if use_cache:
+    if not args.no_cache:
         try:
             cache_mgr = get_cache_manager()
             cache_mgr.evict_expired()
         except Exception as e:
-            console.print(f"[yellow]Cache unavailable: {e}[/yellow]")
+            console.print(f"[{C_WARN}]Cache unavailable: {e}[/{C_WARN}]")
 
     session = Session()
 
     while True:
         try:
-            user_input = Prompt.ask("\n[bold green]>[/bold green]").strip()
-
+            user_input = Prompt.ask(f"\n[bold {C_SUCCESS}]>[/bold {C_SUCCESS}]").strip()
             if not user_input:
                 continue
 
-            # Handle commands
             if user_input.startswith("/"):
-                cmd = user_input.lower().strip()
+                cmd  = user_input.lower().strip()
+                rest = user_input[user_input.index(" ")+1:].strip() if " " in user_input else ""
 
-                if cmd in ["/quit", "/exit", "/q"]:
-                    console.print("\n[bold cyan]👋 Goodbye![/bold cyan]\n")
-                    break
+                if cmd in ["/quit","/exit","/q"]:
+                    console.print(f"\n[bold {C_PRIMARY}]Goodbye![/bold {C_PRIMARY}]\n"); break
 
-                elif cmd == "/help":
-                    cmd_help()
-
-                elif cmd == "/tools":
-                    cmd_tools()
-
-                elif cmd == "/trace":
-                    cmd_trace(session)
-
-                elif cmd == "/dag":
-                    cmd_dag(session)
-
-                elif cmd == "/inspect":
-                    cmd_inspect(session)
-
-                elif cmd == "/explain":
-                    cmd_explain(session)
-
-                elif cmd == "/history":
-                    cmd_history(session)
-
-                elif cmd == "/export":
-                    cmd_export(session)
-
+                elif cmd == "/help":           cmd_help()
+                elif cmd == "/tools":          cmd_tools()
+                elif cmd == "/trace":          cmd_trace(session)
+                elif cmd == "/dag":            cmd_dag(session)
+                elif cmd == "/inspect":        cmd_inspect(session)
+                elif cmd == "/explain":        cmd_explain(session)
+                elif cmd == "/extend":         cmd_extend(session)
+                elif cmd == "/history":        cmd_history(session)
+                elif cmd == "/export":         cmd_export(session)
+                elif cmd == "/clear":          console.clear(); print_banner()
                 elif cmd == "/cache":
-                    if cache_mgr:
-                        cmd_cache(cache_mgr)
-                    else:
-                        console.print("[yellow]Cache is disabled (run without --no-cache to enable)[/yellow]")
-
+                    if cache_mgr: cmd_cache(cache_mgr)
+                    else: console.print(f"[{C_WARN}]Cache disabled[/{C_WARN}]")
                 elif cmd == "/cache clear":
-                    if cache_mgr:
-                        cmd_cache(cache_mgr, subcmd="clear")
-                    else:
-                        console.print("[yellow]Cache is disabled[/yellow]")
-
-                elif cmd == "/clear":
-                    console.clear()
-                    print_banner()
-
+                    if cache_mgr: cmd_cache(cache_mgr, subcmd="clear")
+                    else: console.print(f"[{C_WARN}]Cache disabled[/{C_WARN}]")
+                elif cmd.startswith("/memory"):
+                    cmd_memory(user_input[7:].strip() if len(user_input)>7 else "")
+                elif cmd == "/activate-smith":
+                    from smith.cli.voice_mode import activate_voice_mode
+                    activate_voice_mode(console)
                 elif cmd.startswith("/fleet"):
-                    cmd_fleet(user_input, session)
-
-                elif cmd == "/subagents":
-                    cmd_subagents()
-
-                elif cmd == "/serve":
-                    console.print("[bold green]Starting Smith Web Interface...[/bold green]")
-                    console.print("[dim]Backend API running on http://127.0.0.0:8000[/dim]")
-                    try:
-                        uvicorn.run("smith.server.app:app", host="0.0.0.0", port=8000, reload=True)
-                    except Exception as e:
-                        err_console.print(f"Failed to start server: {e}")
-                    # Re-print banner after server exits
-                    console.clear()
-                    print_banner()
-
+                    # keep existing fleet logic
+                    console.print(f"[{C_DIM}]Fleet mode: {rest}[/{C_DIM}]")
                 else:
                     err_console.print(f"Unknown command: {cmd}")
-                    console.print("[dim]Try /help for available commands[/dim]")
+                    console.print(f"[{C_DIM}]Try /help[/{C_DIM}]")
 
                 continue
 
-            # Execute query
-            response = execute_query(
-                user_input,
-                session,
-                verify_finance=verify_finance,
-                cache_mgr=cache_mgr,
-            )
-
-            # Display final answer via report renderer
+            # ── Execute query ────────────────────────────────────────────────
+            response = execute_query(user_input, session,
+                                     verify_finance=args.verify_finance,
+                                     cache_mgr=cache_mgr)
             if response:
+                console.print()
                 plain = render_report(response, console)
-                # render_report already printed rich panels; store plain text
                 session.add_interaction(user_input, plain or response, session.last_trace)
+
+                # Persist to memory
+                from smith.config import config as _cfg
+                if _cfg.memory_enabled:
+                    try:
+                        from smith.memory import get_memory_manager
+                        mem = get_memory_manager()
+                        mem.write_interaction(user_input, plain or response)
+                        mem.maybe_summarize()
+                    except: pass
+
+                # Hint about /extend for non-trivial responses
+                if session.last_trace and len(session.last_trace) >= 2:
+                    console.print(f"\n  [{C_SUBTLE}]{SYM_EXTEND} /extend for a detailed analytical report[/{C_SUBTLE}]")
             else:
-                console.print("\n[yellow]No response generated[/yellow]")
+                console.print(f"\n[{C_WARN}]No response generated[/{C_WARN}]")
 
         except KeyboardInterrupt:
-            console.print("\n[yellow]Interrupted. Use /quit to exit.[/yellow]")
-            continue
-
+            console.print(f"\n[{C_WARN}]Interrupted. Use /quit to exit.[/{C_WARN}]")
+        except EOFError:
+            break
         except Exception as e:
-            err_console.print(f"\n[bold red]Error:[/bold red] {e}")
+            err_console.print(f"\n[bold {C_ERROR}]Error:[/bold {C_ERROR}] {e}")
             if args.debug:
-                import traceback
-                err_console.print(traceback.format_exc())
+                import traceback; err_console.print(traceback.format_exc())
 
 
 if __name__ == "__main__":

@@ -260,6 +260,7 @@ def check_and_redact(
     redacted_text = response_text
     verified_count = 0
     redacted_details = []
+    redaction_spans: List[Tuple[int, int]] = []
 
     for value, context in numbers:
         if _is_within_tolerance(value, gt_values):
@@ -272,8 +273,7 @@ def check_and_redact(
                 "reason": "Number not found in any upstream tool result (±2% tolerance)",
             })
 
-            # Replace the number in the text
-            # Handle dollar amounts
+            # Collect spans to redact in one pass to avoid index drift/overlap issues.
             dollar_pattern = re.compile(
                 r"\$" + re.escape(f"{value:,.2f}".rstrip("0").rstrip("."))
                 + r"|"
@@ -281,20 +281,40 @@ def check_and_redact(
                 + r"|"
                 + r"\$" + re.escape(str(value))
             )
-            redacted_text = dollar_pattern.sub("[REDACTED - verify manually]", redacted_text)
+            redaction_spans.extend(
+                (match.start(), match.end())
+                for match in dollar_pattern.finditer(response_text)
+            )
 
-            # Handle the plain number
             plain_patterns = [
                 re.escape(f"{value:.2f}"),
                 re.escape(f"{value:.1f}"),
                 re.escape(str(value)),
             ]
             for pp in plain_patterns:
-                redacted_text = re.sub(
-                    r"(?<!\d)" + pp + r"(?!\d)",
-                    "[REDACTED - verify manually]",
-                    redacted_text,
+                redaction_spans.extend(
+                    (match.start(), match.end())
+                    for match in re.finditer(
+                        r"(?<!\d)" + pp + r"(?!\d)",
+                        response_text,
+                    )
                 )
+
+    if redaction_spans:
+        sorted_spans = sorted(redaction_spans, key=lambda span: (span[0], span[1]))
+        merged_spans: List[Tuple[int, int]] = []
+        for start, end in sorted_spans:
+            if not merged_spans or start > merged_spans[-1][1]:
+                merged_spans.append((start, end))
+            else:
+                merged_spans[-1] = (
+                    merged_spans[-1][0],
+                    max(merged_spans[-1][1], end),
+                )
+
+        replacement = "[REDACTED - verify manually]"
+        for start, end in reversed(merged_spans):
+            redacted_text = redacted_text[:start] + replacement + redacted_text[end:]
 
     total = len(numbers)
     redacted_count = len(redacted_details)

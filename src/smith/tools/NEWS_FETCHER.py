@@ -31,7 +31,6 @@ from typing import Any, Union
 
 import requests as http_requests
 from bs4 import BeautifulSoup
-from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -43,11 +42,12 @@ logger = logging.getLogger(__name__)
 # CONSTANTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-OPENROUTER_API_KEY = os.getenv(
-    "OPENROUTER_API_KEY",
-    "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",
+NVIDIA_LLM_API_KEY = os.getenv("NVIDIA_LLM_API_KEY", "")
+NVIDIA_INVOKE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+KEYWORD_MODEL     = os.getenv(
+    "SMITH_LLM_MODEL",
+    "meta/llama-4-maverick-17b-128e-instruct",
 )
-KEYWORD_MODEL     = "nvidia/nemotron-3-nano-30b-a3b:free"
 
 TOP_N_DEFAULT     = 5
 BODY_MAX_CHARS    = 10_000     # hard-truncate anything longer
@@ -101,25 +101,34 @@ def optimize_keywords(raw_query: str) -> str:
     Rewrite raw user query into a clean news search keyword string.
     Returns raw query as fallback on any failure.
     """
-    if not OPENROUTER_API_KEY or not raw_query.strip():
+    if not NVIDIA_LLM_API_KEY or not raw_query.strip():
         return raw_query
 
     try:
-        client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=OPENROUTER_API_KEY,
+        resp = http_requests.post(
+            NVIDIA_INVOKE_URL,
+            headers={
+                "Authorization": f"Bearer {NVIDIA_LLM_API_KEY}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": KEYWORD_MODEL,
+                "messages": [
+                    {"role": "system", "content": KEYWORD_SYSTEM_PROMPT},
+                    {"role": "user",   "content": f"Convert to news search keywords:\n{raw_query}"}
+                ],
+                "temperature": 0.2,
+                "max_tokens": 60,
+                "top_p": 0.9,
+                "frequency_penalty": 0.0,
+                "presence_penalty": 0.0,
+                "stream": False,
+            },
+            timeout=30,
         )
-        response = client.chat.completions.create(
-            model=KEYWORD_MODEL,
-            messages=[
-                {"role": "system", "content": KEYWORD_SYSTEM_PROMPT},
-                {"role": "user",   "content": f"Convert to news search keywords:\n{raw_query}"}
-            ],
-            temperature=0.2,
-            max_tokens=60,
-            top_p=0.9,
-        )
-        optimized = response.choices[0].message.content.strip()
+        resp.raise_for_status()
+        optimized = (resp.json()["choices"][0]["message"]["content"] or "").strip()
         optimized = re.sub(r'^["\'\`]|["\'\`]$', "", optimized).strip()
 
         if not optimized or len(optimized) > 200:
@@ -230,18 +239,18 @@ def _is_blocked(url: str) -> bool:
     return False
 
 
-def fetch_body_simple(url: str) -> str:
+def fetch_body_simple(url: str) -> tuple[str, bool]:
     """
     Fetch article body using requests + BeautifulSoup.
     Extracts text from <article>, then falls back to <p> tags.
-    Returns empty string on any failure — never raises.
+    Returns (body_text, was_truncated). Never raises.
     """
     if not url or not url.startswith("http"):
-        return ""
+        return "", False
 
     if _is_blocked(url):
         logger.debug(f"[BodyFetch] Blocked domain — skipping: {url}")
-        return ""
+        return "", False
 
     try:
         resp = http_requests.get(
@@ -254,7 +263,7 @@ def fetch_body_simple(url: str) -> str:
 
         content_type = resp.headers.get("Content-Type", "")
         if "html" not in content_type.lower():
-            return ""
+            return "", False
 
         soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -270,7 +279,8 @@ def fetch_body_simple(url: str) -> str:
             text = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
             if len(text) > 200:
                 logger.info(f"[BodyFetch] <article> → {len(text):,} chars: {url[:80]}")
-                return text[:BODY_MAX_CHARS]
+                was_truncated = len(text) > BODY_MAX_CHARS
+                return text[:BODY_MAX_CHARS], was_truncated
 
         # Strategy 2: semantic containers
         for selector in ["main", "[role='main']", ".article-body", ".story-body",
@@ -281,20 +291,22 @@ def fetch_body_simple(url: str) -> str:
                 text = "\n\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
                 if len(text) > 200:
                     logger.info(f"[BodyFetch] {selector} → {len(text):,} chars: {url[:80]}")
-                    return text[:BODY_MAX_CHARS]
+                    was_truncated = len(text) > BODY_MAX_CHARS
+                    return text[:BODY_MAX_CHARS], was_truncated
 
         # Strategy 3: all <p> tags (last resort)
         paragraphs = soup.find_all("p")
         text = "\n\n".join(p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 40)
         if len(text) > 200:
             logger.info(f"[BodyFetch] <p> fallback → {len(text):,} chars: {url[:80]}")
-            return text[:BODY_MAX_CHARS]
+            was_truncated = len(text) > BODY_MAX_CHARS
+            return text[:BODY_MAX_CHARS], was_truncated
 
-        return ""
+        return "", False
 
     except Exception as e:
         logger.debug(f"[BodyFetch] Failed: {url}: {e}")
-        return ""
+        return "", False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -362,11 +374,11 @@ def run_news_fetcher(
                 break
 
             url = article.get("url", "")
-            body = fetch_body_simple(url) if url else ""
+            body, was_truncated = fetch_body_simple(url) if url else ("", False)
 
             if body:
                 article["body"]        = body
-                article["body_status"] = "full" if len(body) < BODY_MAX_CHARS else "truncated"
+                article["body_status"] = "truncated" if was_truncated else "full"
             elif article.get("snippet"):
                 article["body"]        = article["snippet"]
                 article["body_status"] = "snippet_only"
@@ -389,6 +401,11 @@ def run_news_fetcher(
         "count":            len(results),
         "total_available":  total_available,
         "articles":         results,
+        "response":         "\n\n".join(
+            f"{a['title']}\n{a['body']}"
+            for a in results
+            if a.get("body") or a.get("title")
+        ),
     }
 
 

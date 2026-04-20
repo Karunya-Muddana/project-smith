@@ -22,6 +22,10 @@ No API key needed.
 """
 
 import logging
+import socket
+import ipaddress
+from urllib.parse import urlparse
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -48,10 +52,78 @@ BLOCKED_DOMAINS = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _is_blocked(url: str) -> bool:
+    try:
+        hostname = (urlparse(url).hostname or "").lower().strip(".")
+    except Exception:
+        return False
+
+    if not hostname:
+        return False
+
     for domain in BLOCKED_DOMAINS:
-        if domain in url:
+        dom = domain.lower().strip(".")
+        if hostname == dom or hostname.endswith("." + dom):
             return True
     return False
+
+
+def _is_blocked_ip(ip_str: str) -> bool:
+    try:
+        ip_obj = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True
+
+    metadata_net = ipaddress.ip_network("169.254.0.0/16")
+    if ip_obj in metadata_net:
+        return True
+
+    return (
+        ip_obj.is_private
+        or ip_obj.is_loopback
+        or ip_obj.is_link_local
+        or ip_obj.is_multicast
+        or ip_obj.is_reserved
+        or ip_obj.is_unspecified
+    )
+
+
+def _validate_external_target(url: str) -> tuple[bool, str]:
+    try:
+        hostname = (urlparse(url).hostname or "").strip()
+    except Exception:
+        return False, "Invalid URL format."
+
+    if not hostname:
+        return False, "URL must include a valid hostname."
+
+    try:
+        addr_info = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return False, f"Hostname could not be resolved: {hostname}"
+    except Exception as exc:
+        return False, f"Failed to resolve hostname '{hostname}': {exc}"
+
+    if not addr_info:
+        return False, f"No IP addresses resolved for hostname: {hostname}"
+
+    resolved_ips = set()
+    for entry in addr_info:
+        sockaddr = entry[4]
+        if not sockaddr:
+            continue
+        resolved_ips.add(sockaddr[0])
+
+    if not resolved_ips:
+        return False, f"No IP addresses resolved for hostname: {hostname}"
+
+    for ip in resolved_ips:
+        if _is_blocked_ip(ip):
+            return False, (
+                f"Blocked internal/private target resolved from hostname '{hostname}'"
+                f" ({ip})."
+            )
+
+    return True, ""
 
 
 def _extract_sections(soup) -> list[dict]:
@@ -114,6 +186,14 @@ def run_url_reader(url: str, max_length: int = MAX_LENGTH_DEFAULT) -> dict:
             "status": "error",
             "error":  f"Domain is paywalled/blocked. Cannot extract content from: {url}",
             "url":    url,
+        }
+
+    is_valid_target, validation_error = _validate_external_target(url)
+    if not is_valid_target:
+        return {
+            "status": "error",
+            "error": validation_error,
+            "url": url,
         }
 
     try:

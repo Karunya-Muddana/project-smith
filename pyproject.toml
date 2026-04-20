@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "project-smith"
-version = "0.1.0"
-description = "Smith — Zero-Trust Autonomous Agent Runtime"
+version = "4.0.0"
+description = "Smith — Deterministic Autonomous Agent Runtime with Voice Support"
 readme = "readme.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -13,29 +13,41 @@ authors = [
     { name = "Karunya Muddana" }
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "python-dotenv>=1.0.0",
-    "groq>=0.4.0",  # Groq LLM API
-    "yfinance>=0.2.0",
-    "rich>=13.0.0",  # Beautiful CLI
+    "openai>=1.0.0",  # OpenAI-compatible client (used for OpenRouter/NVIDIA Nemotron)
+    "yfinance>=0.2.0",  # Financial data
+    "rich>=13.0.0",  # Beautiful CLI formatting
     "typer>=0.9.0",  # CLI framework
     "requests>=2.31.0",  # HTTP requests
     "beautifulsoup4>=4.12.0",  # HTML parsing for web scraper
-    "fastapi>=0.100.0",  # Web API framework
-    "uvicorn>=0.23.0",  # ASGI server for FastAPI
+    "ddgs>=0.1.0",  # DuckDuckGo search — web + news, no API key
+    "wikipedia-api>=0.6.0",  # Wikipedia lookup
+    "numpy>=1.24.0",  # Vector math for memory store
+    "faster-whisper>=0.9.0",  # Speech-to-text for voice mode
+    "edge-tts>=7.2.0",  # Text-to-speech synthesis
 ]
 
 [project.scripts]
 smith = "smith.cli.main:main"
 
 [project.optional-dependencies]
+memory = [
+    "sentence-transformers>=2.2.0",  # Semantic embeddings for memory/RAG (~22 MB)
+]
+audio = [
+    "sounddevice>=0.4.5",  # Audio I/O for voice mode
+    "soundfile>=0.12.0",  # Audio file I/O
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",

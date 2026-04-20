@@ -15,7 +15,6 @@ __pycache__/
 
 # Node (web frontend lives in web/)
 node_modules/
-package-lock.json
 *.db
 agent_db.json
 mongo-init.js

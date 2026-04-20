@@ -15,11 +15,13 @@ No API key needed. No quotas. Completely free.
 """
 
 import logging
+import os
 import wikipediaapi
 
 logger = logging.getLogger(__name__)
 
-USER_AGENT = "SmithAgent/3.0 (research bot; contact@example.com)"
+CONTACT_EMAIL = os.getenv("SMITH_CONTACT_EMAIL", "karunya.muddana@users.noreply.github.com")
+USER_AGENT = f"SmithAgent/4.0 (research bot; {CONTACT_EMAIL})"
 
 SUMMARY_MAX_CHARS  = 3000      # summary limit
 SECTION_MAX_CHARS  = 2000      # per-section text limit

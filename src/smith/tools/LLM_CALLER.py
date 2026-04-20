@@ -1,15 +1,16 @@
 """
-LLM CALLER — OpenRouter Edition
----------------------------------
-Uses OpenRouter API for LLM inference.
-Supports free NVIDIA Nemotron model via OpenRouter.
+LLM CALLER — NVIDIA Inference Edition
+------------------------------------
+Calls NVIDIA's chat completion endpoint for LLM inference.
+Configuration:
+    - NVIDIA_BASE_URL
+    - NVIDIA_LLM_API_KEY
 """
 
 import os
 import time
 import logging
 import threading
-import json
 from dotenv import load_dotenv
 
 # Set up logging
@@ -24,21 +25,20 @@ load_dotenv()
 # Configuration
 # ------------------------------
 
-# OpenRouter API key
-API_KEY = os.getenv(
-    "OPENROUTER_API_KEY",
-    "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",
-)
+# NVIDIA Inference API key
+API_KEY = os.getenv("NVIDIA_LLM_API_KEY", "")
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 
 VALID_MODELS = [
-    "nvidia/nemotron-3-nano-30b-a3b:free",
+    os.getenv(
+        "SMITH_LLM_MODEL",
+        "meta/llama-4-maverick-17b-128e-instruct",
+    ),
 ]
 
 PRIMARY_MODEL = VALID_MODELS[0]
 
-client = None
 init_error = None
 
 # Minimal rate limiter — just to avoid hammering the API
@@ -59,27 +59,13 @@ def _global_rate_limit():
         _last_call_time = time.time()
 
 
-# --- Initialize OpenAI-compatible client for OpenRouter ---
 try:
-    from openai import OpenAI
-
-    if API_KEY:
-        client = OpenAI(
-            base_url=OPENROUTER_BASE_URL,
-            api_key=API_KEY,
-        )
-    else:
-        init_error = "Missing OPENROUTER_API_KEY environment variable."
-
+    import requests as _requests
 except ImportError:
-    # Fallback: use requests directly
-    client = None
-    logger.warning("openai module not found — will use requests fallback.")
-
-    try:
-        import requests as _requests
-    except ImportError:
-        init_error = "Neither 'openai' nor 'requests' module found. Install one."
+    init_error = "requests module not found. Run: pip install requests"
+else:
+    if not API_KEY:
+        init_error = "Missing NVIDIA_LLM_API_KEY environment variable."
 
 
 # ------------------------------
@@ -87,24 +73,13 @@ except ImportError:
 # ------------------------------
 
 
-def extract_text(response) -> str:
-    """Extract text from OpenAI-compatible response."""
-    try:
-        if hasattr(response, "choices") and response.choices:
-            choice = response.choices[0]
-            if hasattr(choice, "message") and hasattr(choice.message, "content"):
-                return choice.message.content
-        return "[EMPTY RESPONSE]"
-    except Exception as e:
-        return f"[PARSE ERROR] {str(e)}"
-
-
-def _fallback_generate(prompt: str, model: str) -> dict:
-    """Use raw requests as fallback when openai SDK is not available."""
+def _generate(prompt: str, model: str) -> str:
+    """Call the NVIDIA inference API and return message text."""
     import requests
 
     headers = {
         "Authorization": f"Bearer {API_KEY}",
+        "Accept": "application/json",
         "Content-Type": "application/json",
     }
     payload = {
@@ -113,22 +88,53 @@ def _fallback_generate(prompt: str, model: str) -> dict:
         "temperature": 0.7,
         "max_tokens": 8192,
         "top_p": 0.95,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "stream": False,
     }
     resp = requests.post(
-        f"{OPENROUTER_BASE_URL}/chat/completions",
+        NVIDIA_BASE_URL,
         headers=headers,
         json=payload,
         timeout=120,
     )
     resp.raise_for_status()
     data = resp.json()
-    content = data["choices"][0]["message"]["content"]
-    return {"status": "success", "response": content}
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"Malformed NVIDIA response: expected JSON object, got {type(data).__name__}: {data!r}"
+        )
+
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError(
+            f"Malformed NVIDIA response: missing or empty 'choices'. Raw response: {data!r}"
+        )
+
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise RuntimeError(
+            f"Malformed NVIDIA response: first choice is not an object. Raw response: {data!r}"
+        )
+
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        raise RuntimeError(
+            f"Malformed NVIDIA response: missing 'message' object. Raw response: {data!r}"
+        )
+
+    content = message.get("content")
+    if not isinstance(content, str):
+        raise RuntimeError(
+            f"Malformed NVIDIA response: missing string 'content'. Raw response: {data!r}"
+        )
+
+    return content
 
 
 def safe_generate(prompt: str, model: str, max_retries: int = 3, base_delay: int = 2):
-    """Call OpenRouter API with retry logic."""
-    if client is None and init_error and "requests" not in str(init_error).lower():
+    """Call NVIDIA Inference API with retry logic."""
+    if init_error:
         raise RuntimeError(f"Client not initialized: {init_error}")
 
     current_model = model
@@ -137,30 +143,7 @@ def safe_generate(prompt: str, model: str, max_retries: int = 3, base_delay: int
         try:
             _global_rate_limit()
 
-            if client is not None:
-                # Use OpenAI SDK
-                response = client.chat.completions.create(
-                    model=current_model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.7,
-                    max_tokens=8192,
-                    top_p=0.95,
-                )
-                return response
-            else:
-                # Fallback to requests
-                result = _fallback_generate(prompt, current_model)
-                # Wrap in a simple object for compatibility
-                class _FakeResponse:
-                    class _Choice:
-                        class _Message:
-                            def __init__(self, content):
-                                self.content = content
-                        def __init__(self, content):
-                            self.message = self._Message(content)
-                    def __init__(self, content):
-                        self.choices = [self._Choice(content)]
-                return _FakeResponse(result["response"])
+            return _generate(prompt, current_model)
 
         except Exception as e:
             msg = str(e).lower()
@@ -193,36 +176,30 @@ def safe_generate(prompt: str, model: str, max_retries: int = 3, base_delay: int
 
 def call_llm(prompt: str, model: str = None):
     """
-    Call LLM via OpenRouter with the given prompt.
-
-    Args:
-        prompt: Text prompt for the LLM
-        model: Model name (uses PRIMARY_MODEL if not specified)
-
-    Returns:
-        dict: {"status": "success"|"error", "response"|"error": str}
+    Unified LLM caller with multi-backend routing.
     """
+
     target_model = model or PRIMARY_MODEL
 
-    # Ignore old Groq model names — always use our OpenRouter model
-    if "llama" in target_model.lower() or "mixtral" in target_model.lower():
-        target_model = PRIMARY_MODEL
-
-    if client is None and init_error and "requests" not in str(init_error).lower():
-        return {"status": "error", "error": init_error}
+    if init_error:
+        raise RuntimeError(f"Client not initialized: {init_error}")
 
     try:
-        raw_response = safe_generate(prompt, target_model)
-        text_output = extract_text(raw_response)
+        # ── NVIDIA / DeepSeek routing ────────────────────────
+        if "deepseek" in target_model:
+            return {
+                "status": "success",
+                "response": safe_generate(prompt, target_model)
+            }
 
-        if text_output.startswith("["):
-            return {"status": "error", "error": text_output}
-
-        return {"status": "success", "response": text_output}
+        # ── Default (Groq / others) ──────────────────────────
+        return {
+            "status": "success",
+            "response": safe_generate(prompt, target_model)
+        }
 
     except Exception as e:
         return {"status": "error", "error": str(e)}
-
 
 # ===========================================================================
 # SMITH AGENT INTERFACE
@@ -245,7 +222,7 @@ llm_caller = run_llm_tool
 METADATA = {
     "name": "llm_caller",
     "description": (
-        "Access a Large Language Model (NVIDIA Nemotron 30B via OpenRouter) to summarize text, answer questions, or write code."
+        "Access a Large Language Model via NVIDIA Inference to summarize text, answer questions, or write code."
     ),
     "function": "run_llm_tool",
     "dangerous": False,
