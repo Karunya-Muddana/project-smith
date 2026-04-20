@@ -443,7 +443,7 @@ Never hardcode keys:
 ```python
 # Use environment variables
 import os
-api_key = os.getenv("GROQ_API_KEY")
+api_key = os.getenv("NVIDIA_LLM_API_KEY")
 ```
 
 ### Input Validation

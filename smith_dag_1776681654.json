@@ -1,0 +1,77 @@
+{
+  "status": "success",
+  "nodes": [
+    {
+      "id": 0,
+      "thought": "Fetch latest news on AMD",
+      "tool": "news_fetcher",
+      "function": "run_news_fetcher",
+      "inputs": {
+        "raw_query": "AMD latest news AI chip",
+        "top_n": 5,
+        "fetch_body": true
+      },
+      "depends_on": [],
+      "retry": 2,
+      "on_fail": "continue",
+      "timeout": 45,
+      "_normalized_deps": []
+    },
+    {
+      "id": 1,
+      "thought": "Fetch latest news on Intel",
+      "tool": "news_fetcher",
+      "function": "run_news_fetcher",
+      "inputs": {
+        "raw_query": "Intel latest news AI chip",
+        "top_n": 5,
+        "fetch_body": true
+      },
+      "depends_on": [],
+      "retry": 2,
+      "on_fail": "continue",
+      "timeout": 45,
+      "_normalized_deps": []
+    },
+    {
+      "id": 2,
+      "thought": "Combine news results for deep analysis",
+      "tool": "deep_summarizer",
+      "function": "run_deep_summarizer",
+      "inputs": {
+        "text": "{{STEPS.0.response}}\n\n{{STEPS.1.response}}",
+        "query": "Compare AMD and Intel AI chip strategies"
+      },
+      "depends_on": [
+        0,
+        1
+      ],
+      "retry": 2,
+      "on_fail": "halt",
+      "timeout": 45,
+      "_normalized_deps": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "thought": "Generate final comparison analysis",
+      "tool": "llm_caller",
+      "function": "run_llm_tool",
+      "inputs": {
+        "prompt": "{{STEPS.2.response}}"
+      },
+      "depends_on": [
+        2
+      ],
+      "retry": 2,
+      "on_fail": "halt",
+      "timeout": 45,
+      "_normalized_deps": [
+        2
+      ]
+    }
+  ],
+  "final_output_node": 3
+}

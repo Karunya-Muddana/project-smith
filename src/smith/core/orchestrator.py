@@ -59,11 +59,6 @@ STEP_REF_RE = re.compile(r"^\{\{\s*STEPS\.(\d+)\s*\}\}$", re.IGNORECASE)
 # No longer need DB service - using static registry
 
 
-def reset_services():
-    """Reset global services. Used for testing."""
-    registry.reset_cache()
-
-
 def execute_with_timeout(
     fn: Callable, args: Dict[str, Any], timeout: float
 ) -> Dict[str, Any]:
@@ -200,31 +195,6 @@ def _deep_get(obj: Any, path: str) -> Any:
     return cur
 
 
-def resolve_prompt_placeholders(prompt: str, trace: List[Dict[str, Any]]) -> str:
-    """
-    Only used for llm_caller.prompt.
-    It replaces {{STEPS.i.path}} with data from the trace.
-    """
-
-    def repl(m: re.Match) -> str:
-        try:
-            idx = int(m.group(1))
-        except ValueError:
-            return ""
-        path = m.group(2)
-        if idx < 0 or idx >= len(trace):
-            return ""
-        data = trace[idx].get("result")
-        value = _deep_get(data, path)
-        if value is None:
-            return ""
-        if isinstance(value, (dict, list)):
-            return safe_serialize(value)
-        return str(value)
-
-    return PLACEHOLDER_RE.sub(repl, prompt)
-
-
 # ============================================================================ #
 # ORCHESTRATOR (DAG-AWARE)                                                    #
 # ============================================================================ #
@@ -236,6 +206,7 @@ def smith_orchestrator(
     exclude_tools: list = None,
     verify_finance: bool = False,
     cache_manager: "Optional[CacheManager]" = None,
+    recent_context: str = "",
 ) -> Generator[Dict[str, Any], None, None]:
     """
     The Main Event Loop.
@@ -265,8 +236,37 @@ def smith_orchestrator(
         return
 
     # 2) Call planner -------------------------------------------------------
+    # Inject recent short-term context + long-term memory to reduce redundant tool calls.
+    _planning_sections: List[str] = []
+
+    if recent_context and recent_context.strip():
+        _planning_sections.append(
+            "[Recent conversation context]\n"
+            f"{recent_context.strip()}\n"
+            "[End recent conversation context]\n"
+            "Guidance: if this is a follow-up to very recent time-sensitive data, "
+            "prefer reusing the recent context instead of re-calling live APIs unless "
+            "the user explicitly asks for refresh, latest, live, current, or update."
+        )
+
+    if config.memory_enabled:
+        try:
+            from smith.memory import get_memory_manager
+
+            _mem_ctx = get_memory_manager().read_context(user_msg)
+            if _mem_ctx:
+                _planning_sections.append(
+                    f"[Relevant context from past sessions]\n{_mem_ctx}\n"
+                    f"[End memory context]"
+                )
+        except Exception as _mem_err:
+            logger.debug(f"Memory read skipped: {_mem_err}")
+
+    _planning_sections.append(f"Current query: {user_msg}")
+    _planning_msg = "\n\n".join(_planning_sections)
+
     try:
-        plan = planner.plan_task(user_msg, tools_list)
+        plan = planner.plan_task(_planning_msg, tools_list)
         if not isinstance(plan, dict):
             raise RuntimeError("Planner returned non-dict result")
         if plan.get("status") == "error":
@@ -961,8 +961,8 @@ if __name__ == "__main__":
 
     console = Console()
 
-    SMITH_BANNER = """
-   _____  __  __  _____  _______  _    _ 
+    SMITH_BANNER = r"""
+   _____  __  __  _____  _______  _    _
   / ____||  \/  ||_   _||__   __|| |  | |
  | (___  | \  / |  | |     | |   | |__| |
   \___ \ | |\/| |  | |     | |   |  __  |
@@ -975,7 +975,7 @@ if __name__ == "__main__":
         text = Text(SMITH_BANNER, style="bold cyan")
         panel = Panel(
             text,
-            title="[bold magenta]Orchestrator v3.0[/bold magenta]",
+            title="[bold magenta]Orchestrator v4.0[/bold magenta]",
             subtitle="[italic white]Type /help for commands[/italic white]",
             border_style="blue",
             expand=False,

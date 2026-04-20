@@ -1,6 +1,6 @@
 # Smith
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/Karunya-Muddana/project-smith)
+[![Version](https://img.shields.io/badge/version-4.0.0-blue.svg)](https://github.com/Karunya-Muddana/project-smith)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
@@ -31,6 +31,10 @@ Smith takes a fundamentally different approach:
 - **Audit Trail**: Complete execution trace for compliance and debugging
 - **Separation of Concerns**: Planning, execution, and synthesis are isolated
 - **Production-Ready**: Built-in timeout, retry, rate limiting, and resource locking
+- **Voice-First (v4.0+)**: Native speech input/output with full-screen terminal UI
+- **Hallucination Prevention**: Fabrication guard prevents false information
+- **Persistent Memory**: Long-term memory system with RAG capabilities
+- **Intelligent Routing**: Query classification and smart tool selection
 
 ---
 
@@ -58,13 +62,32 @@ See [docs/architecture.md](docs/architecture.md) for detailed architecture docum
 
 ---
 
+## What's New in v4.0
+
+Smith v4.0 is a major architectural overhaul focused on streamlining the codebase and adding advanced AI capabilities:
+
+**Major Updates:**
+- **Removed API system**: CLI-only architecture for faster development and simpler deployment
+- **Voice mode**: Full-screen terminal UI with native speech recognition and synthesis
+- **NVIDIA Nemotron LLM**: Unified LLM provider via OpenRouter for better performance
+- **Advanced safety**: Fabrication guard prevents hallucinations and verifies facts
+- **Memory system**: Long-term memory with RAG for context-aware responses
+- **7 new tools**: Crypto, finance calculations, SEC filings, technical indicators, code analysis, deep summarization, and Gmail integration
+- **Intelligent routing**: Query classification and smart tool selection
+- **Enhanced caching**: Deterministic result caching with TTL-based expiration
+
+See [CHANGELOG.md](CHANGELOG.md) for complete v4.0 release notes.
+
+---
+
 ## Installation
 
 ### Prerequisites
 
 - Python 3.10 or higher
 - pip package manager
-- API keys for desired tools (Groq, Google Search, etc.)
+- NVIDIA_LLM_API_KEY (via OpenRouter for Nemotron models)
+- API keys for optional tools (Google Search, etc.)
 
 ### Quick Install
 
@@ -82,8 +105,8 @@ pip install -e .
 Create a `.env` file in the project root:
 
 ```ini
-# Required: LLM API key
-GROQ_API_KEY="gsk_..."
+# Required: NVIDIA LLM API key (OpenRouter proxy for Nemotron)
+NVIDIA_LLM_API_KEY="your_key_here"
 
 # Optional: Additional tool APIs
 GOOGLE_API_KEY="AIzaSy..."
@@ -116,6 +139,39 @@ Example session:
 Quantum computing has seen significant advances in 2026...
 ```
 
+### Voice Mode (v4.0+)
+
+Launch the CLI with native voice interface:
+
+```bash
+smith --voice
+```
+
+Features:
+- **Speech-to-text**: Automatic speech recognition using Whisper
+- **Natural interaction**: Speak requests and hear responses
+- **Full-screen UI**: Real-time visualization of agent pipeline
+- **Fallback to text**: Automatically switches to typed input if audio hardware unavailable
+
+Example voice session:
+
+```
+⚡ SMITH · VOICE MODE
+🎤 Listening...
+> "Research recent AI regulation changes"
+
+STATUS                          PIPELINE
+◉ PROCESSING                    ① google_search ✓
+▁▂▅▇█▇▅▂▁                     ② deep_summarizer ►
+
+🔊 Speaking response...
+```
+
+Requirements:
+- `faster-whisper` - Speech recognition
+- `melo-tts` - Text-to-speech synthesis
+- Audio input/output hardware
+
 ### Python API
 
 ```python
@@ -136,6 +192,7 @@ for event in smith_orchestrator("What is the stock price of AAPL?"):
 - `/inspect` - Display ASCII flowchart of DAG and trace
 - `/history` - Show conversation history
 - `/export` - Export session to markdown
+- `/voice` - Toggle voice mode on/off
 - `/clear` - Clear screen
 - `/quit` or `/exit` - Exit Smith
 
@@ -147,13 +204,20 @@ Smith includes the following built-in tools:
 
 | Tool | Description | Requirements |
 |------|-------------|--------------|
-| `llm_caller` | LLM reasoning via Groq (Llama 3.3 70B) | GROQ_API_KEY |
-| `finance_fetcher` | Stock prices and financial data | None (uses yfinance) |
-| `google_search` | Web search | GOOGLE_API_KEY, SEARCH_ENGINE_ID |
+| `llm_caller` | LLM reasoning via NVIDIA Nemotron (OpenRouter) | NVIDIA_LLM_API_KEY |
+| `finance_fetcher` | Stock prices and financial data | None |
+| `google_search` | Web search (DuckDuckGo fallback) | GOOGLE_API_KEY (optional) |
 | `news_fetcher` | Latest news articles | None |
 | `weather_fetcher` | Weather information | None |
 | `web_scraper` | Extract text from URLs | None |
 | `arxiv_search` | Search academic papers | None |
+| `code_agent` | Code analysis and generation | NVIDIA_LLM_API_KEY |
+| `crypto_fetcher` | Cryptocurrency data | None |
+| `financial_calculator` | Advanced financial calculations | None |
+| `sec_filings` | SEC filing search and analysis | None |
+| `technical_indicators` | Trading technical analysis | None |
+| `gmail` | Email integration | Google OAuth |
+| `deep_summarizer` | Deep multi-document summarization | NVIDIA_LLM_API_KEY |
 | `sub_agent` | Delegate tasks to child agents | None |
 
 Run `/tools` in the CLI for detailed tool information.

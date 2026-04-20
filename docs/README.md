@@ -109,7 +109,7 @@ When contributing documentation:
 
 ## Version Information
 
-This documentation corresponds to Smith version 0.1.0.
+This documentation corresponds to Smith version 4.0.0 (released 2026-04-20).
 
 For documentation of previous versions, see the [Changelog](../CHANGELOG.md) and git history.
 

@@ -40,29 +40,35 @@ pip install -e .
 ```
 
 This installs Smith and all required dependencies including:
-- groq (LLM API client)
+- NVIDIA Nemotron LLM (via OpenRouter)
 - yfinance (financial data)
 - rich (CLI formatting)
 - typer (CLI framework)
 - requests, beautifulsoup4 (web scraping)
+- faster-whisper, melo-tts (voice mode support)
+- numpy, scikit-learn (embeddings for memory)
 
 ### 4. Configure Environment
 
 Create a `.env` file in the project root directory:
 
 ```ini
-# Required: LLM API key for planning and synthesis
-GROQ_API_KEY="gsk_your_key_here"
+# Required: NVIDIA LLM API key via OpenRouter
+NVIDIA_LLM_API_KEY="your_key_here"
 
-# Optional: Google Search (required for google_search tool)
+# Optional: Google Search (DuckDuckGo is fallback)
 GOOGLE_API_KEY="AIzaSy_your_key_here"
 SEARCH_ENGINE_ID="your_cx_here"
+
+# Optional: Gmail integration
+GMAIL_CLIENT_ID="your_client_id"
+GMAIL_CLIENT_SECRET="your_client_secret"
 
 # Optional: Other tool configurations
 # Add additional API keys as needed
 ```
 
-**Note**: Tools without API keys will still be registered but will fail if called. The planner only uses tools for which you have configured credentials.
+**Note**: Get your NVIDIA_LLM_API_KEY at https://build.nvidia.com/ (free tier available)
 
 ### 5. Verify Installation
 
@@ -94,7 +100,7 @@ You should see the Smith banner and prompt:
  ____) || |  | | _| |_    | |   | |  | |
 |_____/ |_|  |_||_____|   |_|   |_|  |_|
 
-Smith v0.1.0 - Zero-Trust Agent Runtime
+Smith v4.0.0 - Zero-Trust Agent Runtime
 Type /help for commands or enter a request.
 
 >
@@ -177,17 +183,30 @@ Confirm your installation is working:
 
 **Solution**: Ensure you installed with `pip install -e .` and your virtual environment is activated.
 
-### Issue: "GROQ_API_KEY not found"
+### Issue: "NVIDIA_LLM_API_KEY not found"
 
-**Solution**: Create a `.env` file in the project root with your API key.
+**Solution**: Create a `.env` file with NVIDIA_LLM_API_KEY. Get a free key at https://build.nvidia.com/
 
 ### Issue: "Planning failed"
 
-**Solution**: Check that your GROQ_API_KEY is valid and you have internet connectivity.
+**Solution**: Check that NVIDIA_LLM_API_KEY is valid and you have internet connectivity to https://integrate.api.nvidia.com
 
 ### Issue: Tool execution fails
 
 **Solution**: Verify you have configured API keys for the specific tool. Use `/tools` to see which tools require credentials.
+
+## Voice Mode Setup
+
+To enable voice input/output:
+
+```bash
+smith --voice
+```
+
+**Requirements**:
+- Microphone for speech input
+- Speaker for speech output
+- `speech_recognition` and `pyttsx3` packages (installed with Smith)
 
 ## Next Steps
 

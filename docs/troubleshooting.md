@@ -138,7 +138,7 @@ Planner generated a DAG with no meaningful work. Improve the prompt or expand av
 
 ---
 
-## 6. Recent Issues (v0.1.0)
+## 6. Recent Issues (v4.0+)
 
 This section documents issues discovered and resolved in recent development.
 
@@ -153,7 +153,7 @@ This section documents issues discovered and resolved in recent development.
 - Verify `final_answer` event payload structure
 - Check that sub-agent properly propagates events to parent
 
-**Resolution**: Fixed in v0.1.0 by standardizing event handling in `SUB_AGENT.py`.
+**Resolution**: Fixed in v4.0 by standardizing event handling in `SUB_AGENT.py` and improving agent state management.
 
 #### Case 17 — "Rate limit exceeded (429 errors)"
 

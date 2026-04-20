@@ -1,0 +1,78 @@
+{
+  "status": "success",
+  "nodes": [
+    {
+      "id": 0,
+      "thought": "Fetch latest news on AMD",
+      "tool": "google_search",
+      "function": "run_google_search",
+      "inputs": {
+        "query": "AMD latest news AI chips",
+        "num_results": 5,
+        "fetch_webpages": true
+      },
+      "depends_on": [],
+      "retry": 2,
+      "on_fail": "continue",
+      "timeout": 45,
+      "_normalized_deps": []
+    },
+    {
+      "id": 1,
+      "thought": "Fetch latest news on Intel",
+      "tool": "google_search",
+      "function": "run_google_search",
+      "inputs": {
+        "query": "Intel latest news AI chips",
+        "num_results": 5,
+        "fetch_webpages": true
+      },
+      "depends_on": [],
+      "retry": 2,
+      "on_fail": "continue",
+      "timeout": 45,
+      "_normalized_deps": []
+    },
+    {
+      "id": 2,
+      "thought": "Combine news results for deep analysis",
+      "tool": "deep_summarizer",
+      "function": "run_deep_summarizer",
+      "inputs": {
+        "text": "{{STEPS.0.response}}\n\n{{STEPS.1.response}}",
+        "query": "Compare AMD and Intel AI chip strategies"
+      },
+      "depends_on": [
+        0,
+        1
+      ],
+      "retry": 2,
+      "on_fail": "halt",
+      "timeout": 45,
+      "_normalized_deps": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "thought": "Generate final comparison report",
+      "tool": "llm_caller",
+      "function": "run_llm_tool",
+      "inputs": {
+        "prompt": "Based on the analysis: {{STEPS.2.response}}, create a detailed comparison report of AMD vs Intel AI chip strategies",
+        "model": "default"
+      },
+      "depends_on": [
+        2
+      ],
+      "retry": 2,
+      "on_fail": "halt",
+      "timeout": 45,
+      "_normalized_deps": [
+        2
+      ]
+    }
+  ],
+  "final_output_node": 3
+}

@@ -9,7 +9,7 @@ Thank you for your interest in contributing to Smith. This document provides gui
 - Python 3.10 or higher
 - Git
 - pip package manager
-- API keys for testing (GROQ_API_KEY minimum)
+- API keys for testing (NVIDIA_LLM_API_KEY minimum)
 
 ### Initial Setup
 

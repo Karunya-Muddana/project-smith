@@ -23,25 +23,34 @@ This guide covers deploying Smith in production environments.
 #### Production Environment Variables
 
 ```ini
-# Required
-GROQ_API_KEY=your_production_key
+# Required (v4.0+)
+NVIDIA_LLM_API_KEY=your_production_key
 
 # Optional Tool APIs
 GOOGLE_API_KEY=your_key
 SEARCH_ENGINE_ID=your_cx
+GMAIL_CLIENT_ID=your_client_id
+GMAIL_CLIENT_SECRET=your_client_secret
 
 # Production Settings
-SMITH_ENV=production
+SMITH_DEBUG=false
 SMITH_LOG_LEVEL=INFO
 SMITH_MAX_RETRIES=3
-SMITH_DEFAULT_TIMEOUT=60
+SMITH_TIMEOUT=60
 
 # Rate Limiting
-SMITH_ENABLE_RATE_LIMITING=true
+SMITH_API_RPM=30
+SMITH_API_TPM=100000
 
 # Sub-Agent Configuration
 SMITH_MAX_SUBAGENT_DEPTH=3
 SMITH_MAX_FLEET_SIZE=5
+
+# Caching & Memory
+SMITH_CACHE_ENABLED=true
+SMITH_CACHE_TTL=3600
+SMITH_MEMORY_ENABLED=true
+SMITH_MEMORY_DIR=/var/lib/smith/memory
 ```
 
 #### Logging Configuration
@@ -212,7 +221,7 @@ az container create \
   --cpu 2 \
   --memory 4 \
   --environment-variables \
-    GROQ_API_KEY=$GROQ_API_KEY
+    NVIDIA_LLM_API_KEY=$NVIDIA_LLM_API_KEY
 ```
 
 ---
